@@ -2,6 +2,7 @@ import Foundation
 import UIKit
 import Display
 import ComponentFlow
+import SwiftSignalKit
 import TelegramCore
 import TelegramPresentationData
 import AppBundle
@@ -12,30 +13,57 @@ import EmojiTextAttachmentView
 import TextFormat
 import ItemShimmeringLoadingComponent
 import AvatarNode
+import PeerInfoCoverComponent
 
 public final class GiftItemComponent: Component {
     public enum Subject: Equatable {
-        case premium(Int32)
-        case starGift(Int64, TelegramMediaFile)
+        case premium(months: Int32, price: String)
+        case starGift(gift: StarGift.Gift, price: String)
+        case uniqueGift(gift: StarGift.UniqueGift)
     }
     
     public struct Ribbon: Equatable {
-        public enum Color {
+        public enum Color: Equatable {
             case red
             case blue
+            case purple
+            case custom(Int32, Int32)
             
-            var colors: [UIColor] {
+            func colors(theme: PresentationTheme) -> [UIColor] {
                 switch self {
                 case .red:
-                    return [
-                        UIColor(rgb: 0xed1c26),
-                        UIColor(rgb: 0xff5c55)
-                        
-                    ]
+                    if theme.overallDarkAppearance {
+                        return [
+                            UIColor(rgb: 0x522124),
+                            UIColor(rgb: 0x653634)
+                        ]
+                    } else {
+                        return [
+                            UIColor(rgb: 0xed1c26),
+                            UIColor(rgb: 0xff5c55)
+                        ]
+                    }
                 case .blue:
+                    if theme.overallDarkAppearance {
+                        return [
+                            UIColor(rgb: 0x142e42),
+                            UIColor(rgb: 0x354f5b)
+                        ]
+                    } else {
+                        return [
+                            UIColor(rgb: 0x34a4fc),
+                            UIColor(rgb: 0x6fd3ff)
+                        ]
+                    }
+                case .purple:
                     return [
-                        UIColor(rgb: 0x34a4fc),
-                        UIColor(rgb: 0x6fd3ff)
+                        UIColor(rgb: 0x747bf6),
+                        UIColor(rgb: 0xe367d8)
+                    ]
+                case let .custom(topColor, _):
+                    return [
+                        UIColor(rgb: UInt32(bitPattern: topColor)).withMultiplied(hue: 0.97, saturation: 1.45, brightness: 0.89),
+                        UIColor(rgb: UInt32(bitPattern: topColor)).withMultiplied(hue: 1.01, saturation: 1.22, brightness: 1.04)
                     ]
                 }
             }
@@ -54,28 +82,40 @@ public final class GiftItemComponent: Component {
         case anonymous
     }
     
+    public enum Mode: Equatable {
+        case generic
+        case profile
+        case thumbnail
+        case preview
+        case grid
+    }
+    
     let context: AccountContext
     let theme: PresentationTheme
     let peer: GiftItemComponent.Peer?
     let subject: GiftItemComponent.Subject
     let title: String?
     let subtitle: String?
-    let price: String
     let ribbon: Ribbon?
     let isLoading: Bool
     let isHidden: Bool
+    let isSoldOut: Bool
+    let isSelected: Bool
+    let mode: Mode
     
     public init(
         context: AccountContext,
         theme: PresentationTheme,
-        peer: GiftItemComponent.Peer?,
+        peer: GiftItemComponent.Peer? = nil,
         subject: GiftItemComponent.Subject,
         title: String? = nil,
         subtitle: String? = nil,
-        price: String,
         ribbon: Ribbon? = nil,
         isLoading: Bool = false,
-        isHidden: Bool = false
+        isHidden: Bool = false,
+        isSoldOut: Bool = false,
+        isSelected: Bool = false,
+        mode: Mode = .generic
     ) {
         self.context = context
         self.theme = theme
@@ -83,10 +123,12 @@ public final class GiftItemComponent: Component {
         self.subject = subject
         self.title = title
         self.subtitle = subtitle
-        self.price = price
         self.ribbon = ribbon
         self.isLoading = isLoading
         self.isHidden = isHidden
+        self.isSoldOut = isSoldOut
+        self.isSelected = isSelected
+        self.mode = mode
     }
 
     public static func ==(lhs: GiftItemComponent, rhs: GiftItemComponent) -> Bool {
@@ -108,9 +150,6 @@ public final class GiftItemComponent: Component {
         if lhs.subtitle != rhs.subtitle {
             return false
         }
-        if lhs.price != rhs.price {
-            return false
-        }
         if lhs.ribbon != rhs.ribbon {
             return false
         }
@@ -118,6 +157,15 @@ public final class GiftItemComponent: Component {
             return false
         }
         if lhs.isHidden != rhs.isHidden {
+            return false
+        }
+        if lhs.isSoldOut != rhs.isSoldOut {
+            return false
+        }
+        if lhs.isSelected != rhs.isSelected {
+            return false
+        }
+        if lhs.mode != rhs.mode {
             return false
         }
         return true
@@ -130,6 +178,8 @@ public final class GiftItemComponent: Component {
         private let backgroundLayer = SimpleLayer()
         private var loadingBackground: ComponentView<Empty>?
         
+        private let patternView = ComponentView<Empty>()
+        
         private var avatarNode: AvatarNode?
         private let title = ComponentView<Empty>()
         private let subtitle = ComponentView<Empty>()
@@ -138,6 +188,10 @@ public final class GiftItemComponent: Component {
         private let ribbonText = ComponentView<Empty>()
         
         private var animationLayer: InlineStickerItemLayer?
+        private var selectionLayer: SimpleShapeLayer?
+        
+        private var disposables = DisposableSet()
+        private var fetchedFiles = Set<Int64>()
         
         private var hiddenIconBackground: UIVisualEffectView?
         private var hiddenIcon: UIImageView?
@@ -147,7 +201,6 @@ public final class GiftItemComponent: Component {
             
             self.layer.addSublayer(self.backgroundLayer)
             
-            self.backgroundLayer.cornerRadius = 10.0
             if #available(iOS 13.0, *) {
                 self.backgroundLayer.cornerCurve = .circular
             }
@@ -158,13 +211,48 @@ public final class GiftItemComponent: Component {
             fatalError("init(coder:) has not been implemented")
         }
         
+        deinit {
+            self.disposables.dispose()
+        }
+        
         func update(component: GiftItemComponent, availableSize: CGSize, state: EmptyComponentState, environment: Environment<Empty>, transition: ComponentTransition) -> CGSize {
             let isFirstTime = self.component == nil
-            
+            let previousComponent = self.component
             self.component = component
             self.componentState = state
             
-            let size = CGSize(width: availableSize.width, height: component.title != nil ? 178.0 : 154.0)
+            var themeUpdated = false
+            if previousComponent?.theme !== component.theme {
+                themeUpdated = true
+            }
+            
+            let size: CGSize
+            let iconSize: CGSize
+            let cornerRadius: CGFloat
+            switch component.mode {
+            case .generic:
+                size = CGSize(width: availableSize.width, height: component.title != nil ? 178.0 : 154.0)
+                iconSize = CGSize(width: 88.0, height: 88.0)
+                cornerRadius = 10.0
+            case .profile:
+                size = availableSize
+                iconSize = CGSize(width: 88.0, height: 88.0)
+                cornerRadius = 10.0
+            case .thumbnail:
+                size = CGSize(width: availableSize.width, height: availableSize.width)
+                iconSize = CGSize(width: floor(size.width * 0.7), height: floor(size.width * 0.7))
+                cornerRadius = floor(availableSize.width * 0.2)
+            case .grid:
+                size = CGSize(width: availableSize.width, height: availableSize.width)
+                iconSize = CGSize(width: floor(size.width * 0.7), height: floor(size.width * 0.7))
+                cornerRadius = 10.0
+            case .preview:
+                size = availableSize
+                iconSize = CGSize(width: floor(size.width * 0.6), height: floor(size.width * 0.6))
+                cornerRadius = 4.0
+            }
+            
+            self.backgroundLayer.cornerRadius = cornerRadius
             
             if component.isLoading {
                 let loadingBackground: ComponentView<Empty>
@@ -195,40 +283,81 @@ public final class GiftItemComponent: Component {
                 })
                 self.loadingBackground = nil
             }
-                
+            
+            var animationFile: TelegramMediaFile?
+            var backgroundColor: UIColor?
+            var secondBackgroundColor: UIColor?
+            var patternColor: UIColor?
+            var patternFile: TelegramMediaFile?
+            var files: [Int64: TelegramMediaFile] = [:]
+            
+            var placeholderColor = component.theme.list.mediaPlaceholderColor
+            
             let emoji: ChatTextInputTextCustomEmojiAttribute?
-            var file: TelegramMediaFile?
             var animationOffset: CGFloat = 0.0
             switch component.subject {
-            case let .premium(months):
+            case let .premium(months, _):
                 emoji = ChatTextInputTextCustomEmojiAttribute(
                     interactivelySelectedFromPackId: nil,
                     fileId: 0,
                     file: nil,
                     custom: .animation(name: "Gift\(months)")
                 )
-            case let .starGift(_, fileValue):
-                file = fileValue
+            case let .starGift(gift, _):
+                animationFile = gift.file
                 emoji = ChatTextInputTextCustomEmojiAttribute(
                     interactivelySelectedFromPackId: nil,
-                    fileId: fileValue.fileId.id,
-                    file: fileValue
+                    fileId: gift.file.fileId.id,
+                    file: gift.file
                 )
                 animationOffset = 16.0
+            case let .uniqueGift(gift):
+                animationOffset = 16.0
+                for attribute in gift.attributes {
+                    switch attribute {
+                    case let .model(_, file, _):
+                        animationFile = file
+                        if !self.fetchedFiles.contains(file.fileId.id) {
+                            self.disposables.add(freeMediaFileResourceInteractiveFetched(account: component.context.account, userLocation: .other, fileReference: .standalone(media: file), resource: file.resource).start())
+                            self.fetchedFiles.insert(file.fileId.id)
+                        }
+                    case let .pattern(_, file, _):
+                        patternFile = file
+                        files[file.fileId.id] = file
+                    case let .backdrop(_, innerColorValue, outerColorValue, patternColorValue, _, _):
+                        backgroundColor = UIColor(rgb: UInt32(bitPattern: outerColorValue))
+                        secondBackgroundColor = UIColor(rgb: UInt32(bitPattern: innerColorValue))
+                        patternColor = UIColor(rgb: UInt32(bitPattern: patternColorValue))
+                        if let backgroundColor {
+                            placeholderColor = backgroundColor
+                        }
+                    default:
+                        break
+                    }
+                }
+                
+                if let animationFile {
+                    emoji = ChatTextInputTextCustomEmojiAttribute(
+                        interactivelySelectedFromPackId: nil,
+                        fileId: animationFile.fileId.id,
+                        file: animationFile
+                    )
+                } else {
+                    emoji = nil
+                }
             }
             
-            let iconSize = CGSize(width: 88.0, height: 88.0)
             if self.animationLayer == nil, let emoji {
                 let animationLayer = InlineStickerItemLayer(
                     context: .account(component.context),
                     userLocation: .other,
                     attemptSynchronousLoad: false,
                     emoji: emoji,
-                    file: file,
+                    file: animationFile,
                     cache: component.context.animationCache,
                     renderer: component.context.animationRenderer,
                     unique: false,
-                    placeholderColor: component.theme.list.mediaPlaceholderColor,
+                    placeholderColor: placeholderColor,
                     pointSize: CGSize(width: iconSize.width * 2.0, height: iconSize.height * 2.0),
                     loopCount: 1
                 )
@@ -237,79 +366,138 @@ public final class GiftItemComponent: Component {
                 self.layer.addSublayer(animationLayer)
             }
             
-            let animationFrame = CGRect(origin: CGPoint(x: floorToScreenPixels((availableSize.width - iconSize.width) / 2.0), y: animationOffset), size: iconSize)
+            let animationFrame = CGRect(origin: CGPoint(x: floorToScreenPixels((size.width - iconSize.width) / 2.0), y: component.mode == .generic ? animationOffset : floorToScreenPixels((size.height - iconSize.height) / 2.0)), size: iconSize)
             if let animationLayer = self.animationLayer {
                 transition.setFrame(layer: animationLayer, frame: animationFrame)
             }
             
-            if let title = component.title {
-                let titleSize = self.title.update(
-                    transition: transition,
-                    component: AnyComponent(
-                        MultilineTextComponent(
-                            text: .plain(NSAttributedString(string: title, font: Font.semibold(15.0), textColor: component.theme.list.itemPrimaryTextColor)),
-                            horizontalAlignment: .center
-                        )
-                    ),
-                    environment: {},
-                    containerSize: availableSize
-                )
-                let titleFrame = CGRect(origin: CGPoint(x: floorToScreenPixels((availableSize.width - titleSize.width) / 2.0), y: 94.0), size: titleSize)
-                if let titleView = self.title.view {
-                    if titleView.superview == nil {
-                        self.addSubview(titleView)
-                    }
-                    transition.setFrame(view: titleView, frame: titleFrame)
-                }
-            }
-            
-            if let subtitle = component.subtitle {
-                let subtitleSize = self.subtitle.update(
-                    transition: transition,
-                    component: AnyComponent(
-                        MultilineTextComponent(
-                            text: .plain(NSAttributedString(string: subtitle, font: Font.regular(13.0), textColor: component.theme.list.itemPrimaryTextColor)),
-                            horizontalAlignment: .center
-                        )
-                    ),
-                    environment: {},
-                    containerSize: availableSize
-                )
-                let subtitleFrame = CGRect(origin: CGPoint(x: floorToScreenPixels((availableSize.width - subtitleSize.width) / 2.0), y: 112.0), size: subtitleSize)
-                if let subtitleView = self.subtitle.view {
-                    if subtitleView.superview == nil {
-                        self.addSubview(subtitleView)
-                    }
-                    transition.setFrame(view: subtitleView, frame: subtitleFrame)
-                }
-            }
-            
-            let buttonSize = self.button.update(
-                transition: transition,
-                component: AnyComponent(
-                    ButtonContentComponent(
+            if let backgroundColor {
+                let _ = self.patternView.update(
+                    transition: .immediate,
+                    component: AnyComponent(PeerInfoCoverComponent(
                         context: component.context,
-                        text: component.price, 
-                        color: component.price.containsEmoji ? UIColor(rgb: 0xd3720a) : component.theme.list.itemAccentColor,
-                        isStars: component.price.containsEmoji)
-                ),
-                environment: {},
-                containerSize: availableSize
-            )
-            let buttonFrame = CGRect(origin: CGPoint(x: floorToScreenPixels((availableSize.width - buttonSize.width) / 2.0), y: size.height - buttonSize.height - 10.0), size: buttonSize)
-            if let buttonView = self.button.view {
-                if buttonView.superview == nil {
-                    self.addSubview(buttonView)
+                        subject: .custom(backgroundColor, secondBackgroundColor, patternColor, patternFile?.fileId.id),
+                        files: files,
+                        isDark: false,
+                        avatarCenter: CGPoint(x: size.width / 2.0, y: animationFrame.midY),
+                        avatarScale: 1.0,
+                        defaultHeight: size.height,
+                        avatarTransitionFraction: 0.0,
+                        patternTransitionFraction: 0.0
+                    )),
+                    environment: {},
+                    containerSize: availableSize
+                )
+                if let backgroundView = self.patternView.view {
+                    if backgroundView.superview == nil {
+                        backgroundView.layer.cornerRadius = cornerRadius
+                        if #available(iOS 13.0, *) {
+                            backgroundView.layer.cornerCurve = .circular
+                        }
+                        backgroundView.clipsToBounds = true
+                        self.insertSubview(backgroundView, at: 1)
+                    }
+                    backgroundView.frame = CGRect(origin: .zero, size: size)
                 }
-                transition.setFrame(view: buttonView, frame: buttonFrame)
+            }
+            
+            if case .generic = component.mode {
+                if let title = component.title {
+                    let titleSize = self.title.update(
+                        transition: transition,
+                        component: AnyComponent(
+                            MultilineTextComponent(
+                                text: .plain(NSAttributedString(string: title, font: Font.semibold(15.0), textColor: component.theme.list.itemPrimaryTextColor)),
+                                horizontalAlignment: .center
+                            )
+                        ),
+                        environment: {},
+                        containerSize: availableSize
+                    )
+                    let titleFrame = CGRect(origin: CGPoint(x: floorToScreenPixels((availableSize.width - titleSize.width) / 2.0), y: 94.0), size: titleSize)
+                    if let titleView = self.title.view {
+                        if titleView.superview == nil {
+                            self.addSubview(titleView)
+                        }
+                        transition.setFrame(view: titleView, frame: titleFrame)
+                    }
+                }
+                
+                if let subtitle = component.subtitle {
+                    let subtitleSize = self.subtitle.update(
+                        transition: transition,
+                        component: AnyComponent(
+                            MultilineTextComponent(
+                                text: .plain(NSAttributedString(string: subtitle, font: Font.regular(13.0), textColor: component.theme.list.itemPrimaryTextColor)),
+                                horizontalAlignment: .center
+                            )
+                        ),
+                        environment: {},
+                        containerSize: availableSize
+                    )
+                    let subtitleFrame = CGRect(origin: CGPoint(x: floorToScreenPixels((availableSize.width - subtitleSize.width) / 2.0), y: 112.0), size: subtitleSize)
+                    if let subtitleView = self.subtitle.view {
+                        if subtitleView.superview == nil {
+                            self.addSubview(subtitleView)
+                        }
+                        transition.setFrame(view: subtitleView, frame: subtitleFrame)
+                    }
+                }
+                
+                let buttonColor: UIColor
+                var starsColor: UIColor?
+                let price: String
+                switch component.subject {
+                case let .premium(_, priceValue), let .starGift(_, priceValue):
+                    if priceValue.containsEmoji {
+                        buttonColor = component.theme.overallDarkAppearance ? UIColor(rgb: 0xffc337) : UIColor(rgb: 0xd3720a)
+                        if !component.isSoldOut {
+                            starsColor = UIColor(rgb: 0xffbe27)
+                        }
+                    } else {
+                        buttonColor = component.theme.list.itemAccentColor
+                    }
+                    price = priceValue
+                case .uniqueGift:
+                    buttonColor = UIColor.white
+                    starsColor = UIColor.white
+                    price = ""
+                }
+                
+                let buttonSize = self.button.update(
+                    transition: transition,
+                    component: AnyComponent(
+                        ButtonContentComponent(
+                            context: component.context,
+                            text: price,
+                            color: buttonColor,
+                            starsColor: starsColor
+                        )
+                    ),
+                    environment: {},
+                    containerSize: availableSize
+                )
+                let buttonFrame = CGRect(origin: CGPoint(x: floorToScreenPixels((availableSize.width - buttonSize.width) / 2.0), y: size.height - buttonSize.height - 10.0), size: buttonSize)
+                if let buttonView = self.button.view {
+                    if buttonView.superview == nil {
+                        self.addSubview(buttonView)
+                    }
+                    transition.setFrame(view: buttonView, frame: buttonFrame)
+                }
             }
             
             if let ribbon = component.ribbon {
+                let ribbonFontSize: CGFloat
+                if case .profile = component.mode {
+                    ribbonFontSize = 9.0
+                } else {
+                    ribbonFontSize = 10.0
+                }
                 let ribbonTextSize = self.ribbonText.update(
                     transition: transition,
                     component: AnyComponent(
                         MultilineTextComponent(
-                            text: .plain(NSAttributedString(string: ribbon.text, font: Font.semibold(11.0), textColor: .white)),
+                            text: .plain(NSAttributedString(string: ribbon.text, font: Font.semibold(ribbonFontSize), textColor: .white)),
                             horizontalAlignment: .center
                         )
                     ),
@@ -323,8 +511,12 @@ public final class GiftItemComponent: Component {
                     }
                     ribbonTextView.bounds = CGRect(origin: .zero, size: ribbonTextSize)
                     
-                    if self.ribbon.image == nil {
-                        self.ribbon.image = generateGradientTintedImage(image: UIImage(bundleImageName: "Premium/GiftRibbon"), colors: ribbon.color.colors, direction: .diagonal)
+                    if self.ribbon.image == nil || themeUpdated || previousComponent?.ribbon?.color != component.ribbon?.color {
+                        var direction: GradientImageDirection = .mirroredDiagonal
+                        if case .custom = ribbon.color {
+                            direction = .mirroredDiagonal
+                        }
+                        self.ribbon.image = generateGradientTintedImage(image: UIImage(bundleImageName: "Premium/GiftRibbon"), colors: ribbon.color.colors(theme: component.theme), direction: direction)
                     }
                     if let ribbonImage = self.ribbon.image {
                         self.ribbon.frame = CGRect(origin: CGPoint(x: size.width - ribbonImage.size.width + 2.0, y: -2.0), size: ribbonImage.size)
@@ -356,10 +548,15 @@ public final class GiftItemComponent: Component {
                     avatarNode.setPeer(context: component.context, theme: component.theme, peer: nil, overrideImage: .anonymousSavedMessagesIcon(isColored: true))
                 }
                 
-                avatarNode.frame = CGRect(origin: CGPoint(x: 2.0, y: 2.0), size: CGSize(width: 20.0, height: 20.0))
+                avatarNode.frame = CGRect(origin: CGPoint(x: 5.0, y: 5.0), size: CGSize(width: 20.0, height: 20.0))
             }
             
-            self.backgroundLayer.backgroundColor = component.theme.list.itemBlocksBackgroundColor.cgColor
+            if let backgroundColor, let _ = secondBackgroundColor {
+                self.backgroundLayer.backgroundColor = backgroundColor.cgColor
+            } else {
+                self.backgroundLayer.backgroundColor = component.theme.list.itemBlocksBackgroundColor.cgColor
+            }
+            
             transition.setFrame(layer: self.backgroundLayer, frame: CGRect(origin: .zero, size: size))
             
             if component.isHidden {
@@ -407,6 +604,43 @@ public final class GiftItemComponent: Component {
                 }
             }
             
+            if case .grid = component.mode {
+                let lineWidth: CGFloat = 2.0
+                let selectionFrame = CGRect(origin: .zero, size: size).insetBy(dx: 3.0, dy: 3.0)
+                
+                if component.isSelected {
+                    let selectionLayer: SimpleShapeLayer
+                    if let current = self.selectionLayer {
+                        selectionLayer = current
+                    } else {
+                        selectionLayer = SimpleShapeLayer()
+                        self.selectionLayer = selectionLayer
+                        self.layer.addSublayer(selectionLayer)
+                        
+                        selectionLayer.fillColor = UIColor.clear.cgColor
+                        selectionLayer.strokeColor = UIColor.white.cgColor
+                        selectionLayer.lineWidth = lineWidth
+                        selectionLayer.frame = selectionFrame
+                        selectionLayer.path = CGPath(roundedRect: CGRect(origin: .zero, size: selectionFrame.size).insetBy(dx: lineWidth / 2.0, dy: lineWidth / 2.0), cornerWidth: 6.0, cornerHeight: 6.0, transform: nil)
+                        
+                        if !transition.animation.isImmediate {
+                            let initialPath = CGPath(roundedRect: CGRect(origin: .zero, size: selectionFrame.size).insetBy(dx: 0.0, dy: 0.0), cornerWidth: 6.0, cornerHeight: 6.0, transform: nil)
+                            selectionLayer.animate(from: initialPath, to: selectionLayer.path as AnyObject, keyPath: "path", timingFunction: CAMediaTimingFunctionName.easeInEaseOut.rawValue, duration: 0.2)
+                            selectionLayer.animateShapeLineWidth(from: 0.0, to: lineWidth, duration: 0.2)
+                        }
+                    }
+                    
+                } else if let selectionLayer = self.selectionLayer {
+                    self.selectionLayer = nil
+                    
+                    let targetPath = CGPath(roundedRect: CGRect(origin: .zero, size: selectionFrame.size).insetBy(dx: 0.0, dy: 0.0), cornerWidth: 6.0, cornerHeight: 6.0, transform: nil)
+                    selectionLayer.animate(from: selectionLayer.path, to: targetPath, keyPath: "path", timingFunction: CAMediaTimingFunctionName.easeInEaseOut.rawValue, duration: 0.2, removeOnCompletion: false)
+                    selectionLayer.animateShapeLineWidth(from: selectionLayer.lineWidth, to: 0.0, duration: 0.2, removeOnCompletion: false, completion: { _ in
+                        selectionLayer.removeFromSuperlayer()
+                    })
+                }
+            }
+            
             return size
         }
     }
@@ -424,18 +658,18 @@ private final class ButtonContentComponent: Component {
     let context: AccountContext
     let text: String
     let color: UIColor
-    let isStars: Bool
+    let starsColor: UIColor?
     
     public init(
         context: AccountContext,
         text: String,
         color: UIColor,
-        isStars: Bool = false
+        starsColor: UIColor? = nil
     ) {
         self.context = context
         self.text = text
         self.color = color
-        self.isStars = isStars
+        self.starsColor = starsColor
     }
 
     public static func ==(lhs: ButtonContentComponent, rhs: ButtonContentComponent) -> Bool {
@@ -448,7 +682,7 @@ private final class ButtonContentComponent: Component {
         if lhs.color != rhs.color {
             return false
         }
-        if lhs.isStars != rhs.isStars {
+        if lhs.starsColor != rhs.starsColor {
             return false
         }
         return true
@@ -504,7 +738,7 @@ private final class ButtonContentComponent: Component {
             let padding: CGFloat = 9.0
             let size = CGSize(width: titleSize.width + padding * 2.0, height: 30.0)
             
-            if component.isStars {
+            if let starsColor = component.starsColor {
                 let starsLayer: StarsButtonEffectLayer
                 if let current = self.starsLayer {
                     starsLayer = current
@@ -514,7 +748,7 @@ private final class ButtonContentComponent: Component {
                     self.starsLayer = starsLayer
                 }
                 starsLayer.frame = CGRect(origin: .zero, size: size)
-                starsLayer.update(size: size)
+                starsLayer.update(color: starsColor, size: size)
             } else {
                 self.starsLayer?.removeFromSuperlayer()
                 self.starsLayer = nil
@@ -569,13 +803,11 @@ private final class StarsButtonEffectLayer: SimpleLayer {
         fatalError("init(coder:) has not been implemented")
     }
     
-    private func setup() {
-        let color = UIColor(rgb: 0xffbe27)
-        
+    private func setup(color: UIColor) {
         let emitter = CAEmitterCell()
         emitter.name = "emitter"
         emitter.contents = UIImage(bundleImageName: "Premium/Stars/Particle")?.cgImage
-        emitter.birthRate = 25.0
+        emitter.birthRate = 14.0
         emitter.lifetime = 2.0
         emitter.velocity = 12.0
         emitter.velocityRange = 3
@@ -599,9 +831,9 @@ private final class StarsButtonEffectLayer: SimpleLayer {
         self.emitterLayer.emitterCells = [emitter]
     }
     
-    func update(size: CGSize) {
+    func update(color: UIColor, size: CGSize) {
         if self.emitterLayer.emitterCells == nil {
-            self.setup()
+            self.setup(color: color)
         }
         self.emitterLayer.emitterShape = .circle
         self.emitterLayer.emitterSize = CGSize(width: size.width * 0.7, height: size.height * 0.7)

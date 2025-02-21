@@ -24,59 +24,7 @@ import SolidRoundedButtonComponent
 import AnimationCache
 import EmojiTextAttachmentView
 import MediaEditor
-
-enum AvatarBackground: Equatable {
-    case gradient([UInt32])
-    
-    var colors: [UInt32] {
-        switch self {
-        case let .gradient(colors):
-            return colors
-        }
-    }
-    
-    var isLight: Bool {
-        switch self {
-            case let .gradient(colors):
-                if colors.count == 1 {
-                    return UIColor(rgb: colors.first!).lightness > 0.99
-                } else if colors.count == 2 {
-                    return UIColor(rgb: colors.first!).lightness > 0.99 || UIColor(rgb: colors.last!).lightness > 0.99
-                } else {
-                    var lightCount = 0
-                    for color in colors {
-                        if UIColor(rgb: color).lightness > 0.99 {
-                            lightCount += 1
-                        }
-                    }
-                    return lightCount >= 2
-                }
-        }
-    }
-    
-    func generateImage(size: CGSize) -> UIImage {
-        switch self {
-            case let .gradient(colors):
-                if colors.count == 1 {
-                    return generateSingleColorImage(size: size, color: UIColor(rgb: colors.first!))!
-                } else if colors.count == 2 {
-                    return generateGradientImage(size: size, colors: colors.map { UIColor(rgb: $0) }, locations: [0.0, 1.0])!
-                } else {
-                    return GradientBackgroundNode.generatePreview(size: size, colors: colors.map { UIColor(rgb: $0) })
-                }
-        }
-    }
-}
-
-private let defaultBackgrounds: [AvatarBackground] = [
-    .gradient([0xFF5A7FFF, 0xFF2CA0F2, 0xFF4DFF89, 0xFF6BFCEB]),
-    .gradient([0xFFFF011D, 0xFFFF530D, 0xFFFE64DC, 0xFFFFDC61]),
-    .gradient([0xFFFE64DC, 0xFFFF6847, 0xFFFFDD02, 0xFFFFAE10]),
-    .gradient([0xFF84EC00, 0xFF00B7C2, 0xFF00C217, 0xFFFFE600]),
-    .gradient([0xFF86B0FF, 0xFF35FFCF, 0xFF69FFFF, 0xFF76DEFF]),
-    .gradient([0xFFFAE100, 0xFFFF54EE, 0xFFFC2B78, 0xFFFF52D9]),
-    .gradient([0xFF73A4FF, 0xFF5F55FF, 0xFFFF49F8, 0xFFEC76FF]),
-]
+import AvatarBackground
 
 public struct AvatarKeyboardInputData: Equatable {
     var emoji: EmojiPagerContentComponent
@@ -147,7 +95,7 @@ final class AvatarEditorScreenComponent: Component {
             self.context = context
             self.ready = ready
          
-            self.selectedBackground = defaultBackgrounds.first!
+            self.selectedBackground = AvatarBackground.defaultBackgrounds.first!
             self.previousColor = self.selectedBackground
             
             super.init()
@@ -181,7 +129,7 @@ final class AvatarEditorScreenComponent: Component {
                 self.selectedBackground = .gradient(markup.backgroundColors.map { UInt32(bitPattern: $0) })
                 self.previousColor = self.selectedBackground
             } else {
-                self.selectedBackground = defaultBackgrounds.first!
+                self.selectedBackground = AvatarBackground.defaultBackgrounds.first!
             }
             
             self.previousColor = self.selectedBackground
@@ -338,7 +286,7 @@ final class AvatarEditorScreenComponent: Component {
                         |> mapToSignal { keywords -> Signal<[EmojiPagerContentComponent.ItemGroup], NoError> in
                             return combineLatest(
                                 context.account.postbox.itemCollectionsView(orderedItemListCollectionIds: [], namespaces: [Namespaces.ItemCollection.CloudEmojiPacks], aroundIndex: nil, count: 10000000) |> take(1),
-                                combineLatest(keywords.map { context.engine.stickers.searchStickers(query: $0.emoticons)
+                                combineLatest(keywords.map { context.engine.stickers.searchStickers(query: query, emoticon: $0.emoticons, inputLanguageCode: languageCode)
                                 |> map { items -> [FoundStickerItem] in
                                     return items.items
                                 }
@@ -1046,7 +994,7 @@ final class AvatarEditorScreenComponent: Component {
                 transition: transition,
                 component: AnyComponent(BackgroundColorComponent(
                     theme: environment.theme,
-                    values: defaultBackgrounds,
+                    values: AvatarBackground.defaultBackgrounds,
                     selectedValue: state.selectedBackground,
                     customValue: state.customColor,
                     updateValue: { [weak state] value in
@@ -1426,31 +1374,51 @@ final class AvatarEditorScreenComponent: Component {
                         }
                     }
                     
-                    let colors: [NSNumber] = state.selectedBackground.colors.map { Int32(bitPattern: $0) as NSNumber }
+                    let backgroundColors = state.selectedBackground.colors.map { Int32(bitPattern: $0) }
+                    guard let codableEntity = CodableDrawingEntity(entity: entity) else {
+                        return
+                    }
                     
-                    let entitiesData = DrawingEntitiesView.encodeEntitiesData([entity])
-                    
-                    let paintingData = TGPaintingData(
-                        drawing: nil,
-                        entitiesData: entitiesData,
-                        image: nil,
-                        stillImage: nil,
-                        hasAnimation: entity.isAnimated,
-                        stickers: []
-                    )
-                    
-                    let adjustments = PGPhotoEditorValues(
-                        originalSize: size,
+                    let values = MediaEditorValues(
+                        peerId: EnginePeer.Id(namespace: Namespaces.Peer.CloudUser, id: PeerId.Id._internalFromInt64Value(0)),
+                        originalDimensions: PixelDimensions(size),
+                        cropOffset: .zero,
                         cropRect: CGRect(origin: .zero, size: size),
+                        cropScale: 1.0,
                         cropRotation: 0.0,
-                        cropOrientation: .up,
-                        cropLockedAspectRatio: 1.0,
-                        cropMirrored: false,
+                        cropMirroring: false,
+                        cropOrientation: nil,
+                        gradientColors: nil,
+                        videoTrimRange: nil,
+                        videoIsMuted: false,
+                        videoIsFullHd: false,
+                        videoIsMirrored: false,
+                        videoVolume: nil,
+                        additionalVideoPath: nil,
+                        additionalVideoIsDual: false,
+                        additionalVideoPosition: nil,
+                        additionalVideoScale: nil,
+                        additionalVideoRotation: nil,
+                        additionalVideoPositionChanges: [],
+                        additionalVideoTrimRange: nil,
+                        additionalVideoOffset: nil,
+                        additionalVideoVolume: nil,
+                        collage: [],
+                        nightTheme: false,
+                        drawing: nil,
+                        maskDrawing: nil,
+                        entities: [codableEntity],
                         toolValues: [:],
-                        paintingData: paintingData,
-                        sendAsGif: true
+                        audioTrack: nil,
+                        audioTrackTrimRange: nil,
+                        audioTrackOffset: nil,
+                        audioTrackVolume: nil,
+                        audioTrackSamples: nil,
+                        collageTrackSamples: nil,
+                        coverImageTimestamp: nil,
+                        coverDimensions: nil,
+                        qualityPreset: .profileHigh
                     )
-                    let preset: TGMediaVideoConversionPreset = TGMediaVideoConversionPresetProfileHigh
                     
                     let combinedImage = generateImage(size, contextGenerator: { size, context in
                         let bounds = CGRect(origin: .zero, size: size)
@@ -1467,12 +1435,19 @@ final class AvatarEditorScreenComponent: Component {
                     }, opaque: false)!
                     
                     if entity.isAnimated {
+                        let markup: UploadPeerPhotoMarkup
                         if stickerPackId != 0 {
-                            controller.videoCompletion(combinedImage, tempUrl, TGVideoEditAdjustments(photoEditorValues: adjustments, preset: preset, stickerPackId: stickerPackId, stickerPackAccessHash: stickerPackAccessHash, documentId: fileId, colors: colors), { [weak controller] in
+                            markup = .sticker(packReference: .id(id: stickerPackId, accessHash: stickerPackAccessHash), fileId: fileId, backgroundColors: backgroundColors)
+                        } else {
+                            markup = .emoji(fileId: fileId, backgroundColors: backgroundColors)
+                        }
+                        
+                        if stickerPackId != 0 {
+                            controller.videoCompletion(combinedImage, tempUrl, values, markup, { [weak controller] in
                                 controller?.dismiss()
                             })
                         } else {
-                            controller.videoCompletion(combinedImage, tempUrl, TGVideoEditAdjustments(photoEditorValues: adjustments, preset: preset, documentId: fileId, colors: colors), { [weak controller] in
+                            controller.videoCompletion(combinedImage, tempUrl, values, markup, { [weak controller] in
                                 controller?.dismiss()
                             })
                         }
@@ -1513,7 +1488,7 @@ public final class AvatarEditorScreen: ViewControllerComponentContainer {
     }
     
     public var imageCompletion: (UIImage, @escaping () -> Void) -> Void = { _, _ in }
-    public var videoCompletion: (UIImage, URL, TGVideoEditAdjustments, @escaping () -> Void) -> Void = { _, _, _, _ in }
+    public var videoCompletion: (UIImage, URL, MediaEditorValues, UploadPeerPhotoMarkup, @escaping () -> Void) -> Void = { _, _, _, _, _ in }
         
     public static func inputData(context: AccountContext, isGroup: Bool) -> Signal<AvatarKeyboardInputData, NoError> {
         let emojiItems = EmojiPagerContentComponent.emojiInputData(

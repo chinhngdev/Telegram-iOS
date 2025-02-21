@@ -209,10 +209,10 @@ typedef NS_ENUM(int32_t, OngoingCallDataSavingWebrtc) {
 
 - (void)setOnFatalError:(dispatch_block_t _Nullable)onError;
 - (void)setOnPause:(void (^ _Nullable)(bool))onPause;
-- (void)setOnIsActiveUpdated:(void (^_Nonnull)(bool))onIsActiveUpdated;
+- (void)setOnIsActiveUpdated:(void (^ _Nonnull)(bool))onIsActiveUpdated;
 
 #if TARGET_OS_IOS
-- (void)submitPixelBuffer:(CVPixelBufferRef _Nonnull)pixelBuffer rotation:(OngoingCallVideoOrientationWebrtc)rotation;
+- (void)submitSampleBuffer:(CMSampleBufferRef _Nonnull)sampleBuffer rotation:(OngoingCallVideoOrientationWebrtc)rotation completion:(void (^_Nonnull)())completion;
 #endif
 
 - (GroupCallDisposable * _Nonnull)addVideoOutput:(void (^_Nonnull)(CallVideoFrameData * _Nonnull))sink;
@@ -398,9 +398,12 @@ typedef NS_ENUM(int32_t, OngoingGroupCallRequestedVideoQuality) {
 
 @interface GroupCallThreadLocalContext : NSObject
 
+@property (nonatomic, copy) void (^ _Nullable signalBarsChanged)(int32_t);
+
 - (instancetype _Nonnull)initWithQueue:(id<OngoingCallThreadLocalContextQueueWebrtc> _Nonnull)queue
     networkStateUpdated:(void (^ _Nonnull)(GroupCallNetworkState))networkStateUpdated
     audioLevelsUpdated:(void (^ _Nonnull)(NSArray<NSNumber *> * _Nonnull))audioLevelsUpdated
+    activityUpdated:(void (^ _Nonnull)(NSArray<NSNumber *> * _Nonnull))activityUpdated
     inputDeviceId:(NSString * _Nonnull)inputDeviceId
     outputDeviceId:(NSString * _Nonnull)outputDeviceId
     videoCapturer:(OngoingCallThreadLocalContextVideoCapturer * _Nullable)videoCapturer
@@ -415,10 +418,13 @@ typedef NS_ENUM(int32_t, OngoingGroupCallRequestedVideoQuality) {
     enableSystemMute:(bool)enableSystemMute
     preferX264:(bool)preferX264
     logPath:(NSString * _Nonnull)logPath
+statsLogPath:(NSString * _Nonnull)statsLogPath
 onMutedSpeechActivityDetected:(void (^ _Nullable)(bool))onMutedSpeechActivityDetected
-audioDevice:(SharedCallAudioDevice * _Nullable)audioDevice;
+audioDevice:(SharedCallAudioDevice * _Nullable)audioDevice
+encryptionKey:(NSData * _Nullable)encryptionKey
+isConference:(bool)isConference;
 
-- (void)stop;
+- (void)stop:(void (^ _Nullable)())completion;
 
 - (void)setManualAudioSessionIsActive:(bool)isAudioSessionActive;
 
@@ -446,6 +452,8 @@ audioDevice:(SharedCallAudioDevice * _Nullable)audioDevice;
 - (void)addExternalAudioData:(NSData * _Nonnull)data;
 
 - (void)getStats:(void (^ _Nonnull)(OngoingGroupCallStats * _Nonnull))completion;
+
+- (void)addRemoteConnectedEvent:(bool)isRemoteConnected;
 
 @end
 

@@ -77,7 +77,10 @@ private func mediaForMessage(message: Message) -> [(Media, TelegramMediaImage?)]
                 case let .Loaded(content):
                     if let embedUrl = content.embedUrl, !embedUrl.isEmpty {
                         return [(webpage, nil)]
-                    } else if let file = content.file {
+                    } else if var file = content.file {
+                        if content.imageIsVideoCover, let image = content.image {
+                            file = file.withUpdatedVideoCover(image)
+                        }
                         if let result = galleryMediaForMedia(media: file) {
                             return [(result, content.image)]
                         }
@@ -245,8 +248,21 @@ public func galleryItemForEntry(
                 content = NativeVideoContent(id: .message(message.stableId, file.fileId), userLocation: .peer(message.id.peerId), fileReference: .message(message: MessageReference(message), media: file), imageReference: mediaImage.flatMap({ ImageMediaReference.message(message: MessageReference(message), media: $0) }), loopVideo: true, enableSound: false, tempFilePath: tempFilePath, captureProtected: captureProtected, storeAfterDownload: generateStoreAfterDownload?(message, file))
             } else {
                 if true || (file.mimeType == "video/mpeg4" || file.mimeType == "video/mov" || file.mimeType == "video/mp4") {
-                    if NativeVideoContent.isHLSVideo(file: file) {
-                        content = HLSVideoContent(id: .message(message.id, message.stableId, file.fileId), userLocation: .peer(message.id.peerId), fileReference: .message(message: MessageReference(message), media: file), streamVideo: streamVideos, loopVideo: loopVideos)
+                    var isHLS = false
+                    if #available(iOS 13.0, *) {
+                        if NativeVideoContent.isHLSVideo(file: file) {
+                            isHLS = true
+                            
+                            if let data = context.currentAppConfiguration.with({ $0 }).data, let disableHLS = data["video_ignore_alt_documents"] as? Double {
+                                if Int(disableHLS) != 0 {
+                                    isHLS = false
+                                }
+                            }
+                        }
+                    }
+                    
+                    if isHLS {
+                        content = HLSVideoContent(id: .message(message.stableId, file.fileId), userLocation: .peer(message.id.peerId), fileReference: .message(message: MessageReference(message), media: file), streamVideo: streamVideos, loopVideo: loopVideos, autoFetchFullSizeThumbnail: true, codecConfiguration: HLSCodecConfiguration(context: context))
                     } else {
                         content = NativeVideoContent(id: .message(message.stableId, file.fileId), userLocation: .peer(message.id.peerId), fileReference: .message(message: MessageReference(message), media: file), imageReference: mediaImage.flatMap({ ImageMediaReference.message(message: MessageReference(message), media: $0) }), streamVideo: .conservative, loopVideo: loopVideos, tempFilePath: tempFilePath, captureProtected: captureProtected, storeAfterDownload: generateStoreAfterDownload?(message, file))
                     }
@@ -309,13 +325,16 @@ public func galleryItemForEntry(
         } else {
             if let fileName = file.fileName, (fileName as NSString).pathExtension.lowercased() == "json" {
                 return ChatAnimationGalleryItem(context: context, presentationData: presentationData, message: message, location: location)
-            }
-            else if file.mimeType.hasPrefix("image/") && file.mimeType != "image/gif" {
+            } else if file.mimeType.hasPrefix("image/") && file.mimeType != "image/gif" {
                 var pixelsCount: Int = 0
                 if let dimensions = file.dimensions {
                     pixelsCount = Int(dimensions.width) * Int(dimensions.height)
                 }
-                if pixelsCount < 10000 * 10000 {
+                var fileSize: Int64 = 0
+                if let size = file.size {
+                    fileSize = size
+                }
+                if pixelsCount < 10000 * 10000 && fileSize < 16 * 1024 * 1024 {
                     return ChatImageGalleryItem(
                         context: context,
                         presentationData: presentationData,
@@ -550,7 +569,7 @@ private func galleryEntriesForMessageHistoryEntries(_ entries: [MessageHistoryEn
     return results
 }
 
-public class GalleryController: ViewController, StandalonePresentableController, KeyShortcutResponder {
+public class GalleryController: ViewController, StandalonePresentableController, KeyShortcutResponder, GalleryControllerProtocol {
     public static let darkNavigationTheme = NavigationBarTheme(buttonColor: .white, disabledButtonColor: UIColor(rgb: 0x525252), primaryTextColor: .white, backgroundColor: UIColor(white: 0.0, alpha: 0.6), enableBackgroundBlur: false, separatorColor: UIColor(white: 0.0, alpha: 0.8), badgeBackgroundColor: .clear, badgeStrokeColor: .clear, badgeTextColor: .clear)
     public static let lightNavigationTheme = NavigationBarTheme(buttonColor: UIColor(rgb: 0x007aff), disabledButtonColor: UIColor(rgb: 0xd0d0d0), primaryTextColor: .black, backgroundColor: UIColor(red: 0.968626451, green: 0.968626451, blue: 0.968626451, alpha: 1.0), enableBackgroundBlur: false, separatorColor: UIColor(red: 0.6953125, green: 0.6953125, blue: 0.6953125, alpha: 1.0), badgeBackgroundColor: .clear, badgeStrokeColor: .clear, badgeTextColor: .clear)
     
@@ -697,13 +716,8 @@ public class GalleryController: ViewController, StandalonePresentableController,
                 translateToLanguage = chatTranslationState(context: context, peerId: messageId.peerId)
                 |> map { translationState in
                     if let translationState, translationState.isEnabled {
-                        var translateToLanguage = translationState.toLang ?? baseLanguageCode
-                        if translateToLanguage == "nb" {
-                            translateToLanguage = "no"
-                        } else if translateToLanguage == "pt-br" {
-                            translateToLanguage = "pt"
-                        }
-                        return translateToLanguage
+                        let translateToLanguage = translationState.toLang ?? baseLanguageCode
+                        return normalizeTranslationLanguage(translateToLanguage)
                     } else {
                         return nil
                     }
@@ -1039,7 +1053,7 @@ public class GalleryController: ViewController, StandalonePresentableController,
                             } else if isEmail {
                                 content = .copy(text: presentationData.strings.Conversation_EmailCopied)
                             } else if canAddToReadingList {
-                                content = .linkCopied(text: presentationData.strings.Conversation_LinkCopied)
+                                content = .linkCopied(title: nil, text: presentationData.strings.Conversation_LinkCopied)
                             } else {
                                 content = .copy(text: presentationData.strings.Conversation_TextCopied)
                             }
@@ -1198,9 +1212,9 @@ public class GalleryController: ViewController, StandalonePresentableController,
                                             Queue.mainQueue().after(0.2, {
                                                 let content: UndoOverlayContent
                                                 if warnAboutPrivate {
-                                                    content = .linkCopied(text: presentationData.strings.Conversation_PrivateMessageLinkCopiedLong)
+                                                    content = .linkCopied(title: nil, text: presentationData.strings.Conversation_PrivateMessageLinkCopiedLong)
                                                 } else {
-                                                    content = .linkCopied(text: presentationData.strings.Conversation_LinkCopied)
+                                                    content = .linkCopied(title: nil, text: presentationData.strings.Conversation_LinkCopied)
                                                 }
                                                 self?.present(UndoOverlayController(presentationData: presentationData, content: content, elevatedLayout: false, animateInAsReplacement: false, action: { _ in return false }), in: .window(.root))
                                             })
@@ -1353,7 +1367,7 @@ public class GalleryController: ViewController, StandalonePresentableController,
         })
         
         let disableTapNavigation = !(self.context.sharedContext.currentMediaDisplaySettings.with { $0 }.showNextMediaOnTap)
-        self.displayNode = GalleryControllerNode(controllerInteraction: controllerInteraction, disableTapNavigation: disableTapNavigation)
+        self.displayNode = GalleryControllerNode(context: self.context, controllerInteraction: controllerInteraction, disableTapNavigation: disableTapNavigation)
         self.displayNodeDidLoad()
         
         self.galleryNode.statusBar = self.statusBar
@@ -1405,8 +1419,15 @@ public class GalleryController: ViewController, StandalonePresentableController,
             }
         }
         
-        self.galleryNode.completeCustomDismiss = { [weak self] in
-            self?._hiddenMedia.set(.single(nil))
+        self.galleryNode.completeCustomDismiss = { [weak self] isPictureInPicture in
+            if isPictureInPicture {
+                if let chatController = self?.baseNavigationController?.topViewController as? ChatController {
+                    chatController.updatePushedTransition(0.0, transition: .animated(duration: 0.45, curve: .customSpring(damping: 180.0, initialVelocity: 0.0)))
+                }
+            } else {
+                self?._hiddenMedia.set(.single(nil))
+            }
+            
             self?.presentingViewController?.dismiss(animated: false, completion: nil)
         }
         

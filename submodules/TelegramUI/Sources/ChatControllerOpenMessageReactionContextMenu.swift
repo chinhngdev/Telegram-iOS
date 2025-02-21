@@ -192,7 +192,7 @@ extension ChatControllerImpl {
                 if canViewMessageReactionList(message: message) {
                     items = ContextController.Items(content: .custom(ReactionListContextMenuContent(
                         context: self.context,
-                        displayReadTimestamps: false,
+                        displayReadTimestamps: true,
                         availableReactions: availableReactions,
                         animationCache: self.controllerInteraction!.presentationContext.animationCache,
                         animationRenderer: self.controllerInteraction!.presentationContext.animationRenderer,
@@ -391,7 +391,7 @@ extension ChatControllerImpl {
                     return
                 }
                 HapticFeedback().tap()
-                self.push(ChatSendStarsScreen(context: self.context, initialData: initialData, completion: { [weak self] amount, isAnonymous, isBecomingTop, transitionOut in
+                self.push(ChatSendStarsScreen(context: self.context, initialData: initialData, completion: { [weak self] amount, privacy, isBecomingTop, transitionOut in
                     guard let self, amount > 0 else {
                         return
                     }
@@ -471,7 +471,7 @@ extension ChatControllerImpl {
                                     }
                                     
                                     if isBecomingTop {
-                                        self.chatDisplayNode.animateQuizCorrectOptionSelected()
+                                        self.chatDisplayNode.playConfettiAnimation()
                                     }
                                     
                                     if let itemNode, let targetView = itemNode.targetReactionView(value: .stars), self.context.sharedContext.energyUsageSettings.fullTranslucency {
@@ -485,14 +485,14 @@ extension ChatControllerImpl {
                         }
                     }
                     
-                    let _ = self.context.engine.messages.sendStarsReaction(id: message.id, count: Int(amount), isAnonymous: isAnonymous).startStandalone()
-                    self.displayOrUpdateSendStarsUndo(messageId: message.id, count: Int(amount), isAnonymous: isAnonymous)
+                    let _ = self.context.engine.messages.sendStarsReaction(id: message.id, count: Int(amount), privacy: privacy).startStandalone()
+                    self.displayOrUpdateSendStarsUndo(messageId: message.id, count: Int(amount), privacy: privacy)
                 }))
             })
         })
     }
     
-    func displayOrUpdateSendStarsUndo(messageId: EngineMessage.Id, count: Int, isAnonymous: Bool) {
+    func displayOrUpdateSendStarsUndo(messageId: EngineMessage.Id, count: Int, privacy: TelegramPaidReactionPrivacy) {
         if self.currentSendStarsUndoMessageId != messageId {
             if let current = self.currentSendStarsUndoController {
                 self.currentSendStarsUndoController = nil
@@ -507,13 +507,13 @@ extension ChatControllerImpl {
         }
         
         let title: String
-        if isAnonymous {
+        if case .anonymous = privacy {
             title = self.presentationData.strings.Chat_ToastStarsSent_AnonymousTitle(Int32(self.currentSendStarsUndoCount))
         } else {
             title = self.presentationData.strings.Chat_ToastStarsSent_Title(Int32(self.currentSendStarsUndoCount))
         }
         
-        let textItems = extractAnimatedTextString(string: self.presentationData.strings.Chat_ToastStarsSent_Text("", ""), id: "text", mapping: [
+        let textItems = AnimatedTextComponent.extractAnimatedTextString(string: self.presentationData.strings.Chat_ToastStarsSent_Text("", ""), id: "text", mapping: [
             0: .number(self.currentSendStarsUndoCount, minDigits: 1),
             1: .text(self.presentationData.strings.Chat_ToastStarsSent_TextStarAmount(Int32(self.currentSendStarsUndoCount)))
         ])
@@ -535,32 +535,4 @@ extension ChatControllerImpl {
             self.present(controller, in: .current)
         }
     }
-}
-
-private func extractAnimatedTextString(string: PresentationStrings.FormattedString, id: String, mapping: [Int: AnimatedTextComponent.Item.Content]) -> [AnimatedTextComponent.Item] {
-    var textItems: [AnimatedTextComponent.Item] = []
-    
-    var previousIndex = 0
-    let nsString = string.string as NSString
-    for range in string.ranges.sorted(by: { $0.range.lowerBound < $1.range.lowerBound }) {
-        if range.range.lowerBound > previousIndex {
-            textItems.append(AnimatedTextComponent.Item(id: AnyHashable("\(id)_text_before_\(range.index)"), isUnbreakable: true, content: .text(nsString.substring(with: NSRange(location: previousIndex, length: range.range.lowerBound - previousIndex)))))
-        }
-        if let value = mapping[range.index] {
-            let isUnbreakable: Bool
-            switch value {
-            case .text:
-                isUnbreakable = true
-            case .number:
-                isUnbreakable = false
-            }
-            textItems.append(AnimatedTextComponent.Item(id: AnyHashable("\(id)_item_\(range.index)"), isUnbreakable: isUnbreakable, content: value))
-        }
-        previousIndex = range.range.upperBound
-    }
-    if nsString.length > previousIndex {
-        textItems.append(AnimatedTextComponent.Item(id: AnyHashable("\(id)_text_end"), isUnbreakable: true, content: .text(nsString.substring(with: NSRange(location: previousIndex, length: nsString.length - previousIndex)))))
-    }
-    
-    return textItems
 }

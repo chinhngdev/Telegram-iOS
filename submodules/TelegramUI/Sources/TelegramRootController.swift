@@ -41,7 +41,7 @@ private class DetailsChatPlaceholderNode: ASDisplayNode, NavigationDetailsPlaceh
     
     init(context: AccountContext) {
         self.presentationData = context.sharedContext.currentPresentationData.with { $0 }
-        self.presentationInterfaceState = ChatPresentationInterfaceState(chatWallpaper: self.presentationData.chatWallpaper, theme: self.presentationData.theme, strings: self.presentationData.strings, dateTimeFormat: self.presentationData.dateTimeFormat, nameDisplayOrder: self.presentationData.nameDisplayOrder, limitsConfiguration: context.currentLimitsConfiguration.with { $0 }, fontSize: self.presentationData.chatFontSize, bubbleCorners: self.presentationData.chatBubbleCorners, accountPeerId: context.account.peerId, mode: .standard(.default), chatLocation: .peer(id: context.account.peerId), subject: nil, peerNearbyData: nil, greetingData: nil, pendingUnpinnedAllMessages: false, activeGroupCallInfo: nil, hasActiveGroupCall: false, importState: nil, threadData: nil, isGeneralThreadClosed: nil, replyMessage: nil, accountPeerColor: nil, businessIntro: nil)
+        self.presentationInterfaceState = ChatPresentationInterfaceState(chatWallpaper: self.presentationData.chatWallpaper, theme: self.presentationData.theme, strings: self.presentationData.strings, dateTimeFormat: self.presentationData.dateTimeFormat, nameDisplayOrder: self.presentationData.nameDisplayOrder, limitsConfiguration: context.currentLimitsConfiguration.with { $0 }, fontSize: self.presentationData.chatFontSize, bubbleCorners: self.presentationData.chatBubbleCorners, accountPeerId: context.account.peerId, mode: .standard(.default), chatLocation: .peer(id: context.account.peerId), subject: nil, peerNearbyData: nil, greetingData: nil, pendingUnpinnedAllMessages: false, activeGroupCallInfo: nil, hasActiveGroupCall: false, importState: nil, threadData: nil, isGeneralThreadClosed: nil, replyMessage: nil, accountPeerColor: nil, businessIntro: nil, starGiftsAvailable: false)
         
         self.wallpaperBackgroundNode = createWallpaperBackgroundNode(context: context, forChatDisplay: true, useSharedAnimationPhase: true)
         self.emptyNode = ChatEmptyNode(context: context, interaction: nil)
@@ -54,7 +54,7 @@ private class DetailsChatPlaceholderNode: ASDisplayNode, NavigationDetailsPlaceh
     
     func updatePresentationData(_ presentationData: PresentationData) {
         self.presentationData = presentationData
-        self.presentationInterfaceState = ChatPresentationInterfaceState(chatWallpaper: self.presentationData.chatWallpaper, theme: self.presentationData.theme, strings: self.presentationData.strings, dateTimeFormat: self.presentationData.dateTimeFormat, nameDisplayOrder: self.presentationData.nameDisplayOrder, limitsConfiguration: self.presentationInterfaceState.limitsConfiguration, fontSize: self.presentationData.chatFontSize, bubbleCorners: self.presentationData.chatBubbleCorners, accountPeerId: self.presentationInterfaceState.accountPeerId, mode: .standard(.default), chatLocation: self.presentationInterfaceState.chatLocation, subject: nil, peerNearbyData: nil, greetingData: nil, pendingUnpinnedAllMessages: false, activeGroupCallInfo: nil, hasActiveGroupCall: false, importState: nil, threadData: nil, isGeneralThreadClosed: nil, replyMessage: nil, accountPeerColor: nil, businessIntro: nil)
+        self.presentationInterfaceState = ChatPresentationInterfaceState(chatWallpaper: self.presentationData.chatWallpaper, theme: self.presentationData.theme, strings: self.presentationData.strings, dateTimeFormat: self.presentationData.dateTimeFormat, nameDisplayOrder: self.presentationData.nameDisplayOrder, limitsConfiguration: self.presentationInterfaceState.limitsConfiguration, fontSize: self.presentationData.chatFontSize, bubbleCorners: self.presentationData.chatBubbleCorners, accountPeerId: self.presentationInterfaceState.accountPeerId, mode: .standard(.default), chatLocation: self.presentationInterfaceState.chatLocation, subject: nil, peerNearbyData: nil, greetingData: nil, pendingUnpinnedAllMessages: false, activeGroupCallInfo: nil, hasActiveGroupCall: false, importState: nil, threadData: nil, isGeneralThreadClosed: nil, replyMessage: nil, accountPeerColor: nil, businessIntro: nil, starGiftsAvailable: false)
         
         self.wallpaperBackgroundNode.update(wallpaper: presentationData.chatWallpaper, animated: false)
     }
@@ -319,12 +319,12 @@ public final class TelegramRootController: NavigationController, TelegramRootCon
         var returnToCameraImpl: (() -> Void)?
         var dismissCameraImpl: (() -> Void)?
         var showDraftTooltipImpl: (() -> Void)?
-        let cameraController = CameraScreen(
+        let cameraController = CameraScreenImpl(
             context: context,
             mode: .story,
             transitionIn: transitionIn.flatMap {
                 if let sourceView = $0.sourceView {
-                    return CameraScreen.TransitionIn(
+                    return CameraScreenImpl.TransitionIn(
                         sourceView: sourceView,
                         sourceRect: $0.sourceRect,
                         sourceCornerRadius: $0.sourceCornerRadius
@@ -335,7 +335,7 @@ public final class TelegramRootController: NavigationController, TelegramRootCon
             },
             transitionOut: { finished in
                 if let transitionOut = (externalState.transitionOut ?? transitionOut)(finished ? externalState.storyTarget : nil, externalState.isPeerArchived), let destinationView = transitionOut.destinationView {
-                    return CameraScreen.TransitionOut(
+                    return CameraScreenImpl.TransitionOut(
                         destinationView: destinationView,
                         destinationRect: transitionOut.destinationRect,
                         destinationCornerRadius: transitionOut.destinationCornerRadius,
@@ -346,9 +346,9 @@ public final class TelegramRootController: NavigationController, TelegramRootCon
                 }
             },
             completion: { result, resultTransition, dismissed in
-                let subject: Signal<MediaEditorScreen.Subject?, NoError> = result
-                |> map { value -> MediaEditorScreen.Subject? in
-                    func editorPIPPosition(_ position: CameraScreen.PIPPosition) -> MediaEditorScreen.PIPPosition {
+                let subject: Signal<MediaEditorScreenImpl.Subject?, NoError> = result
+                |> map { value -> MediaEditorScreenImpl.Subject? in
+                    func editorPIPPosition(_ position: CameraScreenImpl.PIPPosition) -> MediaEditorScreenImpl.PIPPosition {
                         switch position {
                         case .topLeft:
                             return .topLeft
@@ -364,9 +364,28 @@ public final class TelegramRootController: NavigationController, TelegramRootCon
                     case .pendingImage:
                         return nil
                     case let .image(image):
-                        return .image(image.image, PixelDimensions(image.image.size), image.additionalImage, editorPIPPosition(image.additionalImagePosition))
+                        return .image(image: image.image, dimensions: PixelDimensions(image.image.size), additionalImage: image.additionalImage, additionalImagePosition: editorPIPPosition(image.additionalImagePosition))
                     case let .video(video):
-                        return .video(video.videoPath, video.coverImage, video.mirror, video.additionalVideoPath, video.additionalCoverImage, video.dimensions, video.duration, video.positionChangeTimestamps, editorPIPPosition(video.additionalVideoPosition))
+                        return .video(videoPath: video.videoPath, thumbnail: video.coverImage, mirror: video.mirror, additionalVideoPath: video.additionalVideoPath, additionalThumbnail: video.additionalCoverImage, dimensions: video.dimensions, duration: video.duration, videoPositionChanges: video.positionChangeTimestamps, additionalVideoPosition: editorPIPPosition(video.additionalVideoPosition))
+                    case let .videoCollage(collage):
+                        func editorCollageItem(_ item: CameraScreenImpl.Result.VideoCollage.Item) -> MediaEditorScreenImpl.Subject.VideoCollageItem {
+                            let content: MediaEditorScreenImpl.Subject.VideoCollageItem.Content
+                            switch item.content {
+                            case let .image(image):
+                                content = .image(image)
+                            case let .video(path, duration):
+                                content = .video(path, duration)
+                            case let .asset(asset):
+                                content = .asset(asset)
+                            }
+                            return MediaEditorScreenImpl.Subject.VideoCollageItem(
+                                content: content,
+                                frame: item.frame,
+                                contentScale: item.contentScale,
+                                contentOffset: item.contentOffset
+                            )
+                        }
+                        return .videoCollage(items: collage.items.map { editorCollageItem($0) })
                     case let .asset(asset):
                         return .asset(asset)
                     case let .draft(draft):
@@ -374,10 +393,10 @@ public final class TelegramRootController: NavigationController, TelegramRootCon
                     }
                 }
                 
-                var transitionIn: MediaEditorScreen.TransitionIn?
+                var transitionIn: MediaEditorScreenImpl.TransitionIn?
                 if let resultTransition, let sourceView = resultTransition.sourceView {
                     transitionIn = .gallery(
-                        MediaEditorScreen.TransitionIn.GalleryTransitionIn(
+                        MediaEditorScreenImpl.TransitionIn.GalleryTransitionIn(
                             sourceView: sourceView,
                             sourceRect: resultTransition.sourceRect,
                             sourceImage: resultTransition.sourceImage
@@ -398,7 +417,7 @@ public final class TelegramRootController: NavigationController, TelegramRootCon
                     }
                 }
                 
-                let controller = MediaEditorScreen(
+                let controller = MediaEditorScreenImpl(
                     context: context,
                     mode: .storyEditor,
                     subject: subject,
@@ -406,14 +425,14 @@ public final class TelegramRootController: NavigationController, TelegramRootCon
                     transitionIn: transitionIn,
                     transitionOut: { finished, isNew in
                         if finished, let transitionOut = (externalState.transitionOut ?? transitionOut)(externalState.storyTarget, false), let destinationView = transitionOut.destinationView {
-                            return MediaEditorScreen.TransitionOut(
+                            return MediaEditorScreenImpl.TransitionOut(
                                 destinationView: destinationView,
                                 destinationRect: transitionOut.destinationRect,
                                 destinationCornerRadius: transitionOut.destinationCornerRadius,
                                 completion: transitionOut.completion
                             )
                         } else if !finished, let resultTransition, let (destinationView, destinationRect) = resultTransition.transitionOut(isNew) {
-                            return MediaEditorScreen.TransitionOut(
+                            return MediaEditorScreenImpl.TransitionOut(
                                 destinationView: destinationView,
                                 destinationRect: destinationRect,
                                 destinationCornerRadius: 0.0,
@@ -469,7 +488,7 @@ public final class TelegramRootController: NavigationController, TelegramRootCon
                                 dismissCameraImpl?()
                             })
                         }
-                    } as (MediaEditorScreen.Result, @escaping (@escaping () -> Void) -> Void) -> Void
+                    } as (MediaEditorScreenImpl.Result, @escaping (@escaping () -> Void) -> Void) -> Void
                 )
                 controller.cancelled = { showDraftTooltip in
                     if showDraftTooltip {
@@ -525,7 +544,7 @@ public final class TelegramRootController: NavigationController, TelegramRootCon
     }
     
     public func proceedWithStoryUpload(target: Stories.PendingTarget, result: MediaEditorScreenResult, existingMedia: EngineMedia?, forwardInfo: Stories.PendingForwardInfo?, externalState: MediaEditorTransitionOutExternalState, commit: @escaping (@escaping () -> Void) -> Void) {
-        guard let result = result as? MediaEditorScreen.Result else {
+        guard let result = result as? MediaEditorScreenImpl.Result else {
             return
         }
         let context = self.context
@@ -730,11 +749,22 @@ public final class TelegramRootController: NavigationController, TelegramRootCon
     public func openBirthdaySetup() {
         self.accountSettingsController?.openBirthdaySetup()
     }
+    
+    public func openPhotoSetup(completedWithUploadingImage: @escaping (UIImage, Signal<PeerInfoAvatarUploadStatus, NoError>) -> UIView?) {
+        self.accountSettingsController?.openAvatarSetup(completedWithUploadingImage: completedWithUploadingImage)
+    }
+    
+    public func openAvatars() {
+        if let accountSettingsController = self.accountSettingsController {
+            self.rootTabController?.updateControllerLayout(controller: accountSettingsController)
+            accountSettingsController.openAvatars()
+        }
+    }
 }
 
 //Xcode 16
 #if canImport(ContactProvider)
-extension MediaEditorScreen.Result: @retroactive MediaEditorScreenResult {
+extension MediaEditorScreenImpl.Result: @retroactive MediaEditorScreenResult {
     public var target: Stories.PendingTarget {
         if let sendAsPeerId = self.options.sendAsPeerId {
             return .peer(sendAsPeerId)
@@ -744,7 +774,7 @@ extension MediaEditorScreen.Result: @retroactive MediaEditorScreenResult {
     }
 }
 #else
-extension MediaEditorScreen.Result: MediaEditorScreenResult {
+extension MediaEditorScreenImpl.Result: MediaEditorScreenResult {
     public var target: Stories.PendingTarget {
         if let sendAsPeerId = self.options.sendAsPeerId {
             return .peer(sendAsPeerId)

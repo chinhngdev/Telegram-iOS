@@ -114,7 +114,7 @@ public func parseConfirmationCodeUrl(sharedContext: SharedAccountContext, url: U
         }
     }
     if url.scheme == "tg" {
-        if let host = url.host, let query = url.query, let parsedUrl = parseInternalUrl(sharedContext: sharedContext, query: host + "?" + query) {
+        if let host = url.host, let query = url.query, let parsedUrl = parseInternalUrl(sharedContext: sharedContext, context: nil, query: host + "?" + query) {
             switch parsedUrl {
                 case let .confirmationCode(code):
                     return code
@@ -197,7 +197,7 @@ func openExternalUrlImpl(context: AccountContext, urlContext: OpenURLContext, ur
             if case let .externalUrl(value) = resolved {
                 context.sharedContext.applicationBindings.openUrl(value)
             } else {
-                context.sharedContext.openResolvedUrl(resolved, context: context, urlContext: .generic, navigationController: navigationController, forceExternal: false, openPeer: { peer, navigation in
+                context.sharedContext.openResolvedUrl(resolved, context: context, urlContext: .generic, navigationController: navigationController, forceExternal: false, forceUpdate: false, openPeer: { peer, navigation in
                     switch navigation {
                         case .info:
                             if let infoController = context.sharedContext.makePeerInfoController(context: context, updatedPresentationData: nil, peer: peer._asPeer(), mode: .generic, avatarInitiallyExpanded: false, fromChat: false, requestsContext: nil) {
@@ -655,6 +655,22 @@ func openExternalUrlImpl(context: AccountContext, urlContext: OpenURLContext, ur
                             convertedUrl = "https://t.me/addtheme/\(parameter)"
                         }
                     }
+                } else if parsedUrl.host == "nft" {
+                    if let components = URLComponents(string: "/?" + query) {
+                        var slug: String?
+                        if let queryItems = components.queryItems {
+                            for queryItem in queryItems {
+                                if let value = queryItem.value {
+                                    if queryItem.name == "slug" {
+                                        slug = value
+                                    }
+                                }
+                            }
+                        }
+                        if let slug {
+                            convertedUrl = "https://t.me/nft/\(slug)"
+                        }
+                    }
                 } else if parsedUrl.host == "privatepost" {
                     if let components = URLComponents(string: "/?" + query) {
                         var channelId: Int64?
@@ -738,6 +754,7 @@ func openExternalUrlImpl(context: AccountContext, urlContext: OpenURLContext, ur
                         var startApp: String?
                         var text: String?
                         var profile: Bool = false
+                        var referrer: String?
                         if let queryItems = components.queryItems {
                             for queryItem in queryItems {
                                 if let value = queryItem.value {
@@ -771,6 +788,8 @@ func openExternalUrlImpl(context: AccountContext, urlContext: OpenURLContext, ur
                                         startApp = value
                                     } else if queryItem.name == "text" {
                                         text = value
+                                    } else if queryItem.name == "ref" {
+                                        referrer = value
                                     }
                                 } else if ["voicechat", "videochat", "livestream"].contains(queryItem.name) {
                                     voiceChat = ""
@@ -782,6 +801,8 @@ func openExternalUrlImpl(context: AccountContext, urlContext: OpenURLContext, ur
                                     startChannel = ""
                                 } else if queryItem.name == "profile" {
                                     profile = true
+                                } else if queryItem.name == "startapp" {
+                                    startApp = ""
                                 }
                             }
                         }
@@ -858,6 +879,9 @@ func openExternalUrlImpl(context: AccountContext, urlContext: OpenURLContext, ur
                             }
                             if let text = text {
                                 result += "?text=\(text)"
+                            }
+                            if let referrer {
+                                result += "?ref=\(referrer)"
                             }
                             convertedUrl = result
                         }
@@ -990,6 +1014,8 @@ func openExternalUrlImpl(context: AccountContext, urlContext: OpenURLContext, ur
                             section = .twoStepAuth
                         case "enable_log":
                             section = .enableLog
+                        case "phone_privacy":
+                            section = .phonePrivacy
                         default:
                             break
                         }

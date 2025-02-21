@@ -62,6 +62,13 @@
 - (void)setImage:(UIImage *)image thumbnailImage:(UIImage *)thumbnailImage forItem:(id<TGMediaEditableItem>)item synchronous:(bool)synchronous;
 - (void)setFullSizeImage:(UIImage *)image forItem:(id<TGMediaEditableItem>)item;
 
+- (SSignal *)coverImageSignalForItem:(NSObject<TGMediaEditableItem> *)item;
+- (void)setCoverImage:(UIImage *)image position:(NSNumber *)position forItem:(id<TGMediaEditableItem>)item;
+- (UIImage *)coverImageForItem:(NSObject<TGMediaEditableItem> *)item;
+
+- (NSNumber *)coverPositionForItem:(NSObject<TGMediaEditableItem> *)item;
+- (void)setCoverImage:(UIImage *)image position:(NSNumber *)position forItem:(id<TGMediaEditableItem>)item;
+
 - (void)setTemporaryRep:(id)rep forItem:(id<TGMediaEditableItem>)item;
 
 - (SSignal *)fullSizeImageUrlForItem:(id<TGMediaEditableItem>)item;
@@ -102,6 +109,12 @@
 - (UIImage *)stillPaintingImageForItem:(NSObject<TGMediaEditableItem> *)item;
 - (bool)setPaintingData:(NSData *)data entitiesData:(NSData *)entitiesData image:(UIImage *)image stillImage:(UIImage *)stillImage forItem:(NSObject<TGMediaEditableItem> *)item dataUrl:(NSURL **)dataOutUrl entitiesDataUrl:(NSURL **)entitiesDataOutUrl imageUrl:(NSURL **)imageOutUrl forVideo:(bool)video;
 - (void)clearPaintingData;
+
+
+- (bool)isCaptionAbove;
+- (SSignal *)captionAbove;
+- (void)setCaptionAbove:(bool)captionAbove;
+
 
 - (SSignal *)facesForItem:(NSObject<TGMediaEditableItem> *)item;
 - (void)setFaces:(NSArray *)faces forItem:(NSObject<TGMediaEditableItem> *)item;

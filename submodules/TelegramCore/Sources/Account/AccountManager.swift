@@ -186,7 +186,7 @@ private var declaredEncodables: Void = {
     declareEncodable(CloudPeerPhotoSizeMediaResource.self, f: { CloudPeerPhotoSizeMediaResource(decoder: $0) })
     declareEncodable(CloudStickerPackThumbnailMediaResource.self, f: { CloudStickerPackThumbnailMediaResource(decoder: $0) })
     declareEncodable(ContentRequiresValidationMessageAttribute.self, f: { ContentRequiresValidationMessageAttribute(decoder: $0) })
-    declareEncodable(WasScheduledMessageAttribute.self, f: { WasScheduledMessageAttribute(decoder: $0) })
+    declareEncodable(PendingProcessingMessageAttribute.self, f: { PendingProcessingMessageAttribute(decoder: $0) })
     declareEncodable(OutgoingScheduleInfoMessageAttribute.self, f: { OutgoingScheduleInfoMessageAttribute(decoder: $0) })
     declareEncodable(UpdateMessageReactionsAction.self, f: { UpdateMessageReactionsAction(decoder: $0) })
     declareEncodable(SendStarsReactionsAction.self, f: { SendStarsReactionsAction(decoder: $0) })
@@ -205,6 +205,7 @@ private var declaredEncodables: Void = {
     declareEncodable(WallpaperDataResource.self, f: { WallpaperDataResource(decoder: $0) })
     declareEncodable(ForwardOptionsMessageAttribute.self, f: { ForwardOptionsMessageAttribute(decoder: $0) })
     declareEncodable(SendAsMessageAttribute.self, f: { SendAsMessageAttribute(decoder: $0) })
+    declareEncodable(ForwardVideoTimestampAttribute.self, f: { ForwardVideoTimestampAttribute(decoder: $0) })
     declareEncodable(AudioTranscriptionMessageAttribute.self, f: { AudioTranscriptionMessageAttribute(decoder: $0) })
     declareEncodable(NonPremiumMessageAttribute.self, f: { NonPremiumMessageAttribute(decoder: $0) })
     declareEncodable(TelegramExtendedMedia.self, f: { TelegramExtendedMedia(decoder: $0) })
@@ -229,6 +230,7 @@ private var declaredEncodables: Void = {
     declareEncodable(EffectMessageAttribute.self, f: { EffectMessageAttribute(decoder: $0) })
     declareEncodable(FactCheckMessageAttribute.self, f: { FactCheckMessageAttribute(decoder: $0) })
     declareEncodable(TelegramMediaPaidContent.self, f: { TelegramMediaPaidContent(decoder: $0) })
+    declareEncodable(ReportDeliveryMessageAttribute.self, f: { ReportDeliveryMessageAttribute(decoder: $0) })
     return
 }()
 

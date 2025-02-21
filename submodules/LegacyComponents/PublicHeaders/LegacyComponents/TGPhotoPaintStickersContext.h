@@ -22,7 +22,7 @@
 
 @property (nonatomic, readonly) UIView * _Nonnull view;
 
-- (void)setTimeout:(int32_t)timeout isVideo:(bool)isVideo;
+- (void)setTimeout:(int32_t)timeout isVideo:(bool)isVideo isCaptionAbove:(bool)isCaptionAbove;
 
 - (NSAttributedString * _Nonnull)caption;
 - (void)setCaption:(NSAttributedString * _Nullable)caption;
@@ -36,6 +36,7 @@
 @property (nonatomic, copy) void(^ _Nullable focusUpdated)(BOOL focused);
 @property (nonatomic, copy) void(^ _Nullable heightUpdated)(BOOL animated);
 @property (nonatomic, copy) void(^ _Nullable timerUpdated)(NSNumber * _Nullable value);
+@property (nonatomic, copy) void(^ _Nullable captionIsAboveUpdated)(BOOL value);
 
 - (CGFloat)updateLayoutSize:(CGSize)size keyboardHeight:(CGFloat)keyboardHeight sideInset:(CGFloat)sideInset animated:(bool)animated;
 - (CGFloat)baseHeight;
@@ -118,6 +119,8 @@
 @protocol TGPhotoPaintStickersContext <NSObject>
 
 @property (nonatomic, copy) id<TGCaptionPanelView> _Nullable(^ _Nullable captionPanelView)(void);
+
+@property (nonatomic, copy) void (^ _Nullable editCover)(CGSize dimensions, void(^_Nonnull completion)(UIImage * _Nonnull));
 
 
 - (UIView<TGPhotoSolidRoundedButtonView> *_Nonnull)solidRoundedButton:(NSString *_Nonnull)title action:(void(^_Nonnull)(void))action;

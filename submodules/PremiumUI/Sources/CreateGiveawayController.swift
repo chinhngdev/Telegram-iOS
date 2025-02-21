@@ -784,7 +784,6 @@ private func createGiveawayControllerEntries(
         entries.append(.prepaid(presentationData.theme, title, text, prepaidGiveaway))
     }
     
-    var starsPerUser: Int64 = 0
     if case .generic = subject, case .starsGiveaway = state.mode, !starsGiveawayOptions.isEmpty {
         let selectedOption = starsGiveawayOptions.first(where: { $0.giveawayOption.count == state.stars })!
         entries.append(.starsHeader(presentationData.theme, presentationData.strings.BoostGift_Stars_Title.uppercased(), presentationData.strings.BoostGift_Stars_Boosts(selectedOption.giveawayOption.yearlyBoosts).uppercased()))
@@ -795,13 +794,16 @@ private func createGiveawayControllerEntries(
                 continue
             }
             let giftTitle: String = presentationData.strings.BoostGift_Stars_Stars(Int32(product.giveawayOption.count))
-            let winners = product.giveawayOption.winners.first(where: { $0.users == state.winners }) ?? product.giveawayOption.winners.first!
-            
             let maxWinners = product.giveawayOption.winners.sorted(by: { $0.users < $1.users }).last?.users ?? 1
-            
-            let subtitle = presentationData.strings.BoostGift_Stars_PerUser("\(winners.starsPerUser)").string
+
+            let starsPerUser: Int64
+            if let winners = product.giveawayOption.winners.first(where: { $0.users == state.winners }) {
+                starsPerUser = winners.starsPerUser
+            } else {
+                starsPerUser = product.giveawayOption.count / Int64(state.winners)
+            }
+            let subtitle = presentationData.strings.BoostGift_Stars_PerUser("\(starsPerUser)").string
             let label = product.storeProduct.price
-            starsPerUser = winners.starsPerUser
             
             let isSelected = product.giveawayOption.count == state.stars
             entries.append(.stars(i, presentationData.theme, Int32(product.giveawayOption.count), giftTitle, subtitle, label, isSelected, maxWinners))
@@ -888,12 +890,22 @@ private func createGiveawayControllerEntries(
             }
         }
         
+        let boostCount: Int32
+        switch state.mode {
+        case .giveaway:
+            boostCount = state.subscriptions * 4
+        case .gift:
+            boostCount = Int32(state.peers.count) * 4
+        case .starsGiveaway:
+            boostCount = Int32(state.stars) / 500
+        }
+        
         entries.append(.channelsHeader(presentationData.theme, isGroup ? presentationData.strings.BoostGift_GroupsAndChannelsTitle.uppercased() : presentationData.strings.BoostGift_ChannelsAndGroupsTitle.uppercased()))
         var index: Int32 = 0
         let channels = [peerId] + state.channels
         for channelId in channels {
             if let channel = peers[channelId] {
-                entries.append(.channel(index, presentationData.theme, channel, channel.id == peerId ? state.subscriptions * 4 : nil, false))
+                entries.append(.channel(index, presentationData.theme, channel, channel.id == peerId ? boostCount : nil, false))
             }
             index += 1
         }
@@ -941,7 +953,6 @@ private func createGiveawayControllerEntries(
             if state.mode == .starsGiveaway {
                 let starsString = presentationData.strings.BoostGift_AdditionalPrizesInfoStars(Int32(state.stars))
                 if state.prizeDescription.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    let _ = starsPerUser
                     prizeDescriptionInfoText = presentationData.strings.BoostGift_AdditionalPrizesInfoStarsOn(starsString, "").string
                 } else {
                     prizeDescriptionInfoText = presentationData.strings.BoostGift_AdditionalPrizesInfoStarsOn(starsString, presentationData.strings.BoostGift_AdditionalPrizesInfoStarsAndOther("\(state.winners)", state.prizeDescription).string).string
@@ -1356,7 +1367,7 @@ public func createGiveawayController(context: AccountContext, updatedPresentatio
                     return
                 }
                 let (currency, amount) = selectedProduct.storeProduct.priceCurrencyAndAmount
-                purpose = .giftCode(peerIds: state.peers, boostPeer: peerId, currency: currency, amount: amount)
+                purpose = .giftCode(peerIds: state.peers, boostPeer: peerId, currency: currency, amount: amount, text: nil, entities: nil)
                 quantity = Int32(state.peers.count)
                 storeProduct = selectedProduct.storeProduct
             case .starsGiveaway:

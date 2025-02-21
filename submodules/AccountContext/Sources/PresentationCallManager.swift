@@ -57,14 +57,14 @@ public struct PresentationCallState: Equatable {
     public enum VideoState: Equatable {
         case notAvailable
         case inactive
-        case active(isScreencast: Bool)
-        case paused(isScreencast: Bool)
+        case active(isScreencast: Bool, endpointId: String)
+        case paused(isScreencast: Bool, endpointId: String)
     }
     
     public enum RemoteVideoState: Equatable {
         case inactive
-        case active
-        case paused
+        case active(endpointId: String)
+        case paused(endpointId: String)
     }
     
     public enum RemoteAudioState: Equatable {
@@ -131,6 +131,11 @@ public final class PresentationCallVideoView {
     }
 }
 
+public enum PresentationCallConferenceState {
+    case preparing
+    case ready
+}
+
 public protocol PresentationCall: AnyObject {
     var context: AccountContext { get }
     var isIntegratedWithCallKit: Bool { get }
@@ -143,6 +148,10 @@ public protocol PresentationCall: AnyObject {
     
     var state: Signal<PresentationCallState, NoError> { get }
     var audioLevel: Signal<Float, NoError> { get }
+    
+    var conferenceState: Signal<PresentationCallConferenceState?, NoError> { get }
+    var conferenceStateValue: PresentationCallConferenceState? { get }
+    var conferenceCall: PresentationGroupCall? { get }
 
     var isMuted: Signal<Bool, NoError> { get }
     
@@ -164,7 +173,8 @@ public protocol PresentationCall: AnyObject {
     func setCurrentAudioOutput(_ output: AudioSessionOutput)
     func debugInfo() -> Signal<(String, String), NoError>
     
-    func makeIncomingVideoView(completion: @escaping (PresentationCallVideoView?) -> Void)
+    func upgradeToConference(invitePeerIds: [EnginePeer.Id], completion: @escaping (PresentationGroupCall) -> Void) -> Disposable
+    
     func makeOutgoingVideoView(completion: @escaping (PresentationCallVideoView?) -> Void)
 }
 
@@ -395,7 +405,7 @@ public protocol PresentationGroupCall: AnyObject {
     var account: Account { get }
     var accountContext: AccountContext { get }
     var internalId: CallSessionInternalId { get }
-    var peerId: EnginePeer.Id { get }
+    var peerId: EnginePeer.Id? { get }
     
     var hasVideo: Bool { get }
     var hasScreencast: Bool { get }
@@ -403,6 +413,8 @@ public protocol PresentationGroupCall: AnyObject {
     var schedulePending: Bool { get }
     
     var isStream: Bool { get }
+    var isConference: Bool { get }
+    var encryptionKeyValue: Data? { get }
     
     var audioOutputState: Signal<([AudioSessionOutput], AudioSessionOutput?), NoError> { get }
     
@@ -459,10 +471,31 @@ public protocol PresentationGroupCall: AnyObject {
     
     var inviteLinks: Signal<GroupCallInviteLinks?, NoError> { get }
     
-    func makeIncomingVideoView(endpointId: String, requestClone: Bool, completion: @escaping (PresentationCallVideoView?, PresentationCallVideoView?) -> Void)
     func makeOutgoingVideoView(requestClone: Bool, completion: @escaping (PresentationCallVideoView?, PresentationCallVideoView?) -> Void)
     
     func loadMoreMembers(token: String)
+}
+
+public enum VideoChatCall: Equatable {
+    case group(PresentationGroupCall)
+    case conferenceSource(PresentationCall)
+    
+    public static func ==(lhs: VideoChatCall, rhs: VideoChatCall) -> Bool {
+        switch lhs {
+        case let .group(lhsGroup):
+            if case let .group(rhsGroup) = rhs, lhsGroup === rhsGroup {
+                return true
+            } else {
+                return false
+            }
+        case let .conferenceSource(lhsConferenceSource):
+            if case let .conferenceSource(rhsConferenceSource) = rhs, lhsConferenceSource === rhsConferenceSource {
+                return true
+            } else {
+                return false
+            }
+        }
+    }
 }
 
 public protocol PresentationCallManager: AnyObject {

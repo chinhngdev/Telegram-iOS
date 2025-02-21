@@ -16,6 +16,7 @@ import AppBundle
 import ZipArchive
 import WebKit
 import InAppPurchaseManager
+import TelegramVoip
 
 @objc private final class DebugControllerMailComposeDelegate: NSObject, MFMailComposeViewControllerDelegate {
     public func mailComposeController(_ controller: MFMailComposeViewController, didFinishWith result: MFMailComposeResult, error: Error?) {
@@ -102,10 +103,13 @@ private enum DebugControllerEntry: ItemListNodeEntry {
     case playlistPlayback(Bool)
     case enableQuickReactionSwitch(Bool)
     case disableReloginTokens(Bool)
-    case disableCallV2(Bool)
-    case experimentalCallMute(Bool)
     case liveStreamV2(Bool)
-    case dynamicStreaming(Bool)
+    case experimentalCallMute(Bool)
+    case conferenceCalls(Bool)
+    case playerV2(Bool)
+    case devRequests(Bool)
+    case fakeAds(Bool)
+    case enableLocalTranslation(Bool)
     case preferredVideoCodec(Int, String, String?, Bool)
     case disableVideoAspectScaling(Bool)
     case enableNetworkFramework(Bool)
@@ -130,7 +134,7 @@ private enum DebugControllerEntry: ItemListNodeEntry {
             return DebugControllerSection.web.rawValue
         case .keepChatNavigationStack, .skipReadHistory, .dustEffect, .crashOnSlowQueries, .crashOnMemoryPressure:
             return DebugControllerSection.experiments.rawValue
-        case .clearTips, .resetNotifications, .crash, .fillLocalSavedMessageCache, .resetDatabase, .resetDatabaseAndCache, .resetHoles, .resetTagHoles, .reindexUnread, .resetCacheIndex, .reindexCache, .resetBiometricsData, .optimizeDatabase, .photoPreview, .knockoutWallpaper, .storiesExperiment, .storiesJpegExperiment, .playlistPlayback, .enableQuickReactionSwitch, .experimentalCompatibility, .enableDebugDataDisplay, .rippleEffect, .browserExperiment, .localTranscription, .enableReactionOverrides, .restorePurchases, .disableReloginTokens, .disableCallV2, .experimentalCallMute, .liveStreamV2, .dynamicStreaming:
+        case .clearTips, .resetNotifications, .crash, .fillLocalSavedMessageCache, .resetDatabase, .resetDatabaseAndCache, .resetHoles, .resetTagHoles, .reindexUnread, .resetCacheIndex, .reindexCache, .resetBiometricsData, .optimizeDatabase, .photoPreview, .knockoutWallpaper, .storiesExperiment, .storiesJpegExperiment, .playlistPlayback, .enableQuickReactionSwitch, .experimentalCompatibility, .enableDebugDataDisplay, .rippleEffect, .browserExperiment, .localTranscription, .enableReactionOverrides, .restorePurchases, .disableReloginTokens, .liveStreamV2, .experimentalCallMute, .conferenceCalls, .playerV2, .devRequests, .fakeAds, .enableLocalTranslation:
             return DebugControllerSection.experiments.rawValue
         case .logTranslationRecognition, .resetTranslationStates:
             return DebugControllerSection.translation.rawValue
@@ -243,16 +247,22 @@ private enum DebugControllerEntry: ItemListNodeEntry {
             return 49
         case .enableQuickReactionSwitch:
             return 50
-        case .disableCallV2:
+        case .liveStreamV2:
             return 51
         case .experimentalCallMute:
             return 52
-        case .liveStreamV2:
+        case .conferenceCalls:
             return 53
-        case .dynamicStreaming:
+        case .playerV2:
             return 54
+        case .devRequests:
+            return 55
+        case .fakeAds:
+            return 56
+        case .enableLocalTranslation:
+            return 57
         case let .preferredVideoCodec(index, _, _, _):
-            return 55 + index
+            return 58 + index
         case .disableVideoAspectScaling:
             return 100
         case .enableNetworkFramework:
@@ -285,7 +295,7 @@ private enum DebugControllerEntry: ItemListNodeEntry {
                     } else {
                         UIPasteboard.general.setData(data, forPasteboardType: dataType)
                     }
-                    context.sharedContext.openResolvedUrl(.importStickers, context: context, urlContext: .generic, navigationController: arguments.getNavigationController(), forceExternal: false, openPeer: { _, _ in }, sendFile: nil, sendSticker: nil, sendEmoji: nil, requestMessageActionUrlAuth: nil, joinVoiceChat: nil, present: { c, a in arguments.presentController(c, a as? ViewControllerPresentationArguments) }, dismissInput: {}, contentContext: nil, progress: nil, completion: nil)
+                    context.sharedContext.openResolvedUrl(.importStickers, context: context, urlContext: .generic, navigationController: arguments.getNavigationController(), forceExternal: false, forceUpdate: false, openPeer: { _, _ in }, sendFile: nil, sendSticker: nil, sendEmoji: nil, requestMessageActionUrlAuth: nil, joinVoiceChat: nil, present: { c, a in arguments.presentController(c, a as? ViewControllerPresentationArguments) }, dismissInput: {}, contentContext: nil, progress: nil, completion: nil)
                 }
             })
         case .sendLogs:
@@ -1321,12 +1331,12 @@ private enum DebugControllerEntry: ItemListNodeEntry {
                     })
                 }).start()
             })
-        case let .disableCallV2(value):
-            return ItemListSwitchItem(presentationData: presentationData, title: "Disable Video Chat V2", value: value, sectionId: self.section, style: .blocks, updated: { value in
+        case let .liveStreamV2(value):
+            return ItemListSwitchItem(presentationData: presentationData, title: "Live Stream V2", value: value, sectionId: self.section, style: .blocks, updated: { value in
                 let _ = arguments.sharedContext.accountManager.transaction ({ transaction in
                     transaction.updateSharedData(ApplicationSpecificSharedDataKeys.experimentalUISettings, { settings in
                         var settings = settings?.get(ExperimentalUISettings.self) ?? ExperimentalUISettings.defaultSettings
-                        settings.disableCallV2 = value
+                        settings.liveStreamV2 = value
                         return PreferencesEntry(settings)
                     })
                 }).start()
@@ -1341,22 +1351,52 @@ private enum DebugControllerEntry: ItemListNodeEntry {
                     })
                 }).start()
             })
-        case let .liveStreamV2(value):
-            return ItemListSwitchItem(presentationData: presentationData, title: "Live Stream V2", value: value, sectionId: self.section, style: .blocks, updated: { value in
+        case let .conferenceCalls(value):
+            return ItemListSwitchItem(presentationData: presentationData, title: "Conference [WIP]", value: value, sectionId: self.section, style: .blocks, updated: { value in
                 let _ = arguments.sharedContext.accountManager.transaction ({ transaction in
                     transaction.updateSharedData(ApplicationSpecificSharedDataKeys.experimentalUISettings, { settings in
                         var settings = settings?.get(ExperimentalUISettings.self) ?? ExperimentalUISettings.defaultSettings
-                        settings.liveStreamV2 = value
+                        settings.conferenceCalls = value
                         return PreferencesEntry(settings)
                     })
                 }).start()
             })
-        case let .dynamicStreaming(value):
-            return ItemListSwitchItem(presentationData: presentationData, title: "Dynamic Streaming", value: value, sectionId: self.section, style: .blocks, updated: { value in
+        case let .playerV2(value):
+            return ItemListSwitchItem(presentationData: presentationData, title: "PlayerV2", value: value, sectionId: self.section, style: .blocks, updated: { value in
                 let _ = arguments.sharedContext.accountManager.transaction ({ transaction in
                     transaction.updateSharedData(ApplicationSpecificSharedDataKeys.experimentalUISettings, { settings in
                         var settings = settings?.get(ExperimentalUISettings.self) ?? ExperimentalUISettings.defaultSettings
-                        settings.dynamicStreaming = value
+                        settings.playerV2 = value
+                        return PreferencesEntry(settings)
+                    })
+                }).start()
+            })
+        case let .devRequests(value):
+            return ItemListSwitchItem(presentationData: presentationData, title: "DevRequests", value: value, sectionId: self.section, style: .blocks, updated: { value in
+                let _ = arguments.sharedContext.accountManager.transaction ({ transaction in
+                    transaction.updateSharedData(ApplicationSpecificSharedDataKeys.experimentalUISettings, { settings in
+                        var settings = settings?.get(ExperimentalUISettings.self) ?? ExperimentalUISettings.defaultSettings
+                        settings.devRequests = value
+                        return PreferencesEntry(settings)
+                    })
+                }).start()
+            })
+        case let .fakeAds(value):
+            return ItemListSwitchItem(presentationData: presentationData, title: "Fake Ads", value: value, sectionId: self.section, style: .blocks, updated: { value in
+                let _ = arguments.sharedContext.accountManager.transaction ({ transaction in
+                    transaction.updateSharedData(ApplicationSpecificSharedDataKeys.experimentalUISettings, { settings in
+                        var settings = settings?.get(ExperimentalUISettings.self) ?? ExperimentalUISettings.defaultSettings
+                        settings.fakeAds = value
+                        return PreferencesEntry(settings)
+                    })
+                }).start()
+            })
+        case let .enableLocalTranslation(value):
+            return ItemListSwitchItem(presentationData: presentationData, title: "Local Translation", value: value, sectionId: self.section, style: .blocks, updated: { value in
+                let _ = arguments.sharedContext.accountManager.transaction ({ transaction in
+                    transaction.updateSharedData(ApplicationSpecificSharedDataKeys.experimentalUISettings, { settings in
+                        var settings = settings?.get(ExperimentalUISettings.self) ?? ExperimentalUISettings.defaultSettings
+                        settings.enableLocalTranslation = value
                         return PreferencesEntry(settings)
                     })
                 }).start()
@@ -1515,23 +1555,16 @@ private func debugControllerEntries(sharedContext: SharedAccountContext, present
         }
         entries.append(.playlistPlayback(experimentalSettings.playlistPlayback))
         entries.append(.enableQuickReactionSwitch(!experimentalSettings.disableQuickReaction))
-        entries.append(.disableCallV2(experimentalSettings.disableCallV2))
-        entries.append(.experimentalCallMute(experimentalSettings.experimentalCallMute))
         entries.append(.liveStreamV2(experimentalSettings.liveStreamV2))
-        entries.append(.dynamicStreaming(experimentalSettings.dynamicStreaming))
+        entries.append(.experimentalCallMute(experimentalSettings.experimentalCallMute))
+        
+        entries.append(.conferenceCalls(experimentalSettings.conferenceCalls))
+        entries.append(.playerV2(experimentalSettings.playerV2))
+        
+        entries.append(.devRequests(experimentalSettings.devRequests))
+        entries.append(.fakeAds(experimentalSettings.fakeAds))
+        entries.append(.enableLocalTranslation(experimentalSettings.enableLocalTranslation))
     }
-    
-    /*let codecs: [(String, String?)] = [
-        ("No Preference", nil),
-        ("H265", "H265"),
-        ("H264", "H264"),
-        ("VP8", "VP8"),
-        ("VP9", "VP9")
-    ]
-    
-    for i in 0 ..< codecs.count {
-        entries.append(.preferredVideoCodec(i, codecs[i].0, codecs[i].1, experimentalSettings.preferredVideoCodec == codecs[i].1))
-    }*/
 
     if isMainApp {
         entries.append(.disableVideoAspectScaling(experimentalSettings.disableVideoAspectScaling))

@@ -134,7 +134,8 @@ extension ChatControllerImpl {
                     return
                 }
                 Queue.mainQueue().after(0.15) {
-                    self.openStorySharing(messages: messages)
+                    let controller = self.context.sharedContext.makeStorySharingScreen(context: self.context, subject: .messages(messages), parentController: self)
+                    self.push(controller)
                 }
             }
         }
@@ -155,9 +156,9 @@ extension ChatControllerImpl {
             }
             let content: UndoOverlayContent
             if warnAboutPrivate {
-                content = .linkCopied(text: self.presentationData.strings.Conversation_PrivateMessageLinkCopiedLong)
+                content = .linkCopied(title: nil, text: self.presentationData.strings.Conversation_PrivateMessageLinkCopiedLong)
             } else {
-                content = .linkCopied(text: self.presentationData.strings.Conversation_LinkCopied)
+                content = .linkCopied(title: nil, text: self.presentationData.strings.Conversation_LinkCopied)
             }
             self.present(UndoOverlayController(presentationData: self.presentationData, content: content, elevatedLayout: false, animateInAsReplacement: false, action: { _ in return false }), in: .current)
         }

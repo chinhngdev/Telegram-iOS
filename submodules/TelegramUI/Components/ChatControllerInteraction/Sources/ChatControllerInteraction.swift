@@ -253,6 +253,8 @@ public final class ChatControllerInteraction: ChatControllerInteractionProtocol 
     public let openJoinLink: (String) -> Void
     public let openWebView: (String, String, Bool, ChatOpenWebViewSource) -> Void
     public let activateAdAction: (EngineMessage.Id, Promise<Bool>?, Bool, Bool) -> Void
+    public let adContextAction: (Message, ASDisplayNode, ContextGesture?) -> Void
+    public let removeAd: (Data) -> Void
     public let openRequestedPeerSelection: (EngineMessage.Id, ReplyMarkupButtonRequestPeerType, Int32, Int32) -> Void
     public let saveMediaToFiles: (EngineMessage.Id) -> Void
     public let openNoAdsDemo: () -> Void
@@ -265,6 +267,8 @@ public final class ChatControllerInteraction: ChatControllerInteractionProtocol 
     public let openAgeRestrictedMessageMedia: (Message, @escaping () -> Void) -> Void
     public let playMessageEffect: (Message) -> Void
     public let editMessageFactCheck: (MessageId) -> Void
+    public let sendGift: (EnginePeer.Id) -> Void
+    public let openUniqueGift: (String) -> Void
     
     public let requestMessageUpdate: (MessageId, Bool) -> Void
     public let cancelInteractiveKeyboardGestures: () -> Void
@@ -384,6 +388,8 @@ public final class ChatControllerInteraction: ChatControllerInteractionProtocol 
         openJoinLink: @escaping (String) -> Void,
         openWebView: @escaping (String, String, Bool, ChatOpenWebViewSource) -> Void,
         activateAdAction: @escaping (EngineMessage.Id, Promise<Bool>?, Bool, Bool) -> Void,
+        adContextAction: @escaping (Message, ASDisplayNode, ContextGesture?) -> Void,
+        removeAd: @escaping (Data) -> Void,
         openRequestedPeerSelection: @escaping (EngineMessage.Id, ReplyMarkupButtonRequestPeerType, Int32, Int32) -> Void,
         saveMediaToFiles: @escaping (EngineMessage.Id) -> Void,
         openNoAdsDemo: @escaping () -> Void,
@@ -396,6 +402,8 @@ public final class ChatControllerInteraction: ChatControllerInteractionProtocol 
         openAgeRestrictedMessageMedia: @escaping (Message, @escaping () -> Void) -> Void,
         playMessageEffect: @escaping (Message) -> Void,
         editMessageFactCheck: @escaping (MessageId) -> Void,
+        sendGift: @escaping (EnginePeer.Id) -> Void,
+        openUniqueGift: @escaping (String) -> Void,
         requestMessageUpdate: @escaping (MessageId, Bool) -> Void,
         cancelInteractiveKeyboardGestures: @escaping () -> Void,
         dismissTextInput: @escaping () -> Void,
@@ -494,6 +502,8 @@ public final class ChatControllerInteraction: ChatControllerInteractionProtocol 
         self.openJoinLink = openJoinLink
         self.openWebView = openWebView
         self.activateAdAction = activateAdAction
+        self.adContextAction = adContextAction
+        self.removeAd = removeAd
         self.openRequestedPeerSelection = openRequestedPeerSelection
         self.saveMediaToFiles = saveMediaToFiles
         self.openNoAdsDemo = openNoAdsDemo
@@ -506,6 +516,8 @@ public final class ChatControllerInteraction: ChatControllerInteractionProtocol 
         self.openAgeRestrictedMessageMedia = openAgeRestrictedMessageMedia
         self.playMessageEffect = playMessageEffect
         self.editMessageFactCheck = editMessageFactCheck
+        self.sendGift = sendGift
+        self.openUniqueGift = openUniqueGift
         
         self.requestMessageUpdate = requestMessageUpdate
         self.cancelInteractiveKeyboardGestures = cancelInteractiveKeyboardGestures

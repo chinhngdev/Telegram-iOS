@@ -71,11 +71,12 @@ public enum ParsedInternalPeerUrlParameter {
     case channelMessage(Int32, Double?)
     case replyThread(Int32, Int32)
     case voiceChat(String?)
-    case appStart(String, String?, Bool)
+    case appStart(String, String?, ResolvedStartAppMode)
     case story(Int32)
     case boost
     case text(String)
     case profile
+    case referrer(String)
 }
 
 public enum ParsedInternalUrl {
@@ -104,6 +105,7 @@ public enum ParsedInternalUrl {
     case chatFolder(slug: String)
     case premiumGiftCode(slug: String)
     case messageLink(slug: String)
+    case collectible(slug: String)
     case externalUrl(url: String)
 }
 
@@ -112,7 +114,7 @@ private enum ParsedUrl {
     case internalUrl(ParsedInternalUrl)
 }
 
-public func parseInternalUrl(sharedContext: SharedAccountContext, query: String) -> ParsedInternalUrl? {
+public func parseInternalUrl(sharedContext: SharedAccountContext, context: AccountContext?, query: String) -> ParsedInternalUrl? {
     var query = query
     if query.hasPrefix("s/") {
         query = String(query[query.index(query.startIndex, offsetBy: 2)...])
@@ -269,7 +271,18 @@ public func parseInternalUrl(sharedContext: SharedAccountContext, query: String)
                                     }
                                     return .peer(.name(peerName), .attachBotStart(value, startAttach))
                                 } else if queryItem.name == "start" {
-                                    return .peer(.name(peerName), .botStart(value))
+                                    var linkRefPrefix = "_tgr_"
+                                    if let context {
+                                        if let data = context.currentAppConfiguration.with({ $0 }).data, let value = data["starref_start_param_prefixes"] as? String {
+                                            linkRefPrefix = value
+                                        }
+                                    }
+                                    if value.hasPrefix(linkRefPrefix) {
+                                        let referrer = String(value[value.index(value.startIndex, offsetBy: linkRefPrefix.count)...])
+                                        return .peer(.name(peerName), .referrer(referrer))
+                                    } else {
+                                        return .peer(.name(peerName), .botStart(value))
+                                    }
                                 } else if queryItem.name == "startgroup" {
                                     var botAdminRights: ResolvedBotAdminRights?
                                     for queryItem in queryItems {
@@ -293,23 +306,32 @@ public func parseInternalUrl(sharedContext: SharedAccountContext, query: String)
                                     }
                                     return .startAttach(peerName, value, choose)
                                  } else if queryItem.name == "startapp" {
-                                     var compact = false
+                                     var mode: ResolvedStartAppMode = .generic
                                      if let queryItems = components.queryItems {
                                          for queryItem in queryItems {
                                              if let value = queryItem.value {
-                                                 if queryItem.name == "mode", value == "compact" {
-                                                     compact = true
+                                                 if queryItem.name == "mode" {
+                                                     switch value {
+                                                     case "compact":
+                                                         mode = .compact
+                                                     case "fullscreen":
+                                                         mode = .fullscreen
+                                                     default:
+                                                         break
+                                                     }
                                                      break
                                                  }
                                              }
                                          }
                                      }
-                                     return .peer(.name(peerName), .appStart("", queryItem.value, compact))
+                                     return .peer(.name(peerName), .appStart("", queryItem.value, mode))
                                  } else if queryItem.name == "story" {
                                     if let id = Int32(value) {
                                         return .peer(.name(peerName), .story(id))
                                     }
-                                }
+                                 } else if queryItem.name == "ref", let referrer = queryItem.value {
+                                     return .peer(.name(peerName), .referrer(referrer))
+                                 }
                             } else if ["voicechat", "videochat", "livestream"].contains(queryItem.name)  {
                                 return .peer(.name(peerName), .voiceChat(nil))
                             } else if queryItem.name == "startattach" {
@@ -335,18 +357,27 @@ public func parseInternalUrl(sharedContext: SharedAccountContext, query: String)
                             } else if queryItem.name == "profile" {
                                 return .peer(.name(peerName), .profile)
                             } else if queryItem.name == "startapp" {
-                                var compact = false
+                                var mode: ResolvedStartAppMode = .generic
                                 if let queryItems = components.queryItems {
                                     for queryItem in queryItems {
                                         if let value = queryItem.value {
-                                            if queryItem.name == "mode", value == "compact" {
-                                                compact = true
+                                            if queryItem.name == "mode" {
+                                                switch value {
+                                                case "compact":
+                                                    mode = .compact
+                                                case "fullscreen":
+                                                    mode = .fullscreen
+                                                default:
+                                                    break
+                                                }
                                                 break
                                             }
                                         }
                                     }
                                 }
-                                return .peer(.name(peerName), .appStart("", nil, compact))
+                                return .peer(.name(peerName), .appStart("", queryItem.value, mode))
+                            } else if queryItem.name == "ref", let referrer = queryItem.value {
+                                return .peer(.name(peerName), .referrer(referrer))
                             }
                         }
                     }
@@ -493,6 +524,8 @@ public func parseInternalUrl(sharedContext: SharedAccountContext, query: String)
                     return .wallpaper(parameter)
                 } else if pathComponents[0] == "addtheme" {
                     return .theme(pathComponents[1])
+                } else if pathComponents[0] == "nft" {
+                    return .collectible(slug: pathComponents[1])
                 } else if pathComponents[0] == "addlist" || pathComponents[0] == "folder" || pathComponents[0] == "list" {
                     return .chatFolder(slug: pathComponents[1])
                 } else if pathComponents[0] == "boost", pathComponents.count == 2 {
@@ -513,8 +546,9 @@ public func parseInternalUrl(sharedContext: SharedAccountContext, query: String)
                                             threadId = intValue
                                         }
                                     } else if queryItem.name == "t" {
-                                        if let doubleValue = Double(value) {
-                                            timecode = doubleValue
+                                        let timestampValue = hTmeParseDuration(value)
+                                        if timestampValue != 0 {
+                                            timecode = Double(timestampValue)
                                         }
                                     }
                                 }
@@ -537,8 +571,9 @@ public func parseInternalUrl(sharedContext: SharedAccountContext, query: String)
                             for queryItem in queryItems {
                                 if let value = queryItem.value {
                                     if queryItem.name == "t" {
-                                        if let doubleValue = Double(value) {
-                                            timecode = doubleValue
+                                        let timestampValue = hTmeParseDuration(value)
+                                        if timestampValue != 0 {
+                                            timecode = Double(timestampValue)
                                         }
                                     }
                                 }
@@ -595,8 +630,9 @@ public func parseInternalUrl(sharedContext: SharedAccountContext, query: String)
                                         commentId = intValue
                                     }
                                 } else if queryItem.name == "t" {
-                                    if let doubleValue = Double(value) {
-                                        timecode = doubleValue
+                                    let timestampValue = hTmeParseDuration(value)
+                                    if timestampValue != 0 {
+                                        timecode = Double(timestampValue)
                                     }
                                 }
                             }
@@ -615,19 +651,27 @@ public func parseInternalUrl(sharedContext: SharedAccountContext, query: String)
                 } else if pathComponents.count == 2 {
                     let appName = pathComponents[1]
                     var startApp: String?
-                    var compact = false
+                    var mode: ResolvedStartAppMode = .generic
                     if let queryItems = components.queryItems {
                         for queryItem in queryItems {
                             if let value = queryItem.value {
                                 if queryItem.name == "startapp" {
                                     startApp = value
-                                } else if queryItem.name == "mode", value == "compact" {
-                                    compact = true
+                                }
+                                if queryItem.name == "mode" {
+                                    switch value {
+                                    case "compact":
+                                        mode = .compact
+                                    case "fullscreen":
+                                        mode = .fullscreen
+                                    default:
+                                        break
+                                    }
                                 }
                             }
                         }
                     }
-                    return .peer(.name(peerName), .appStart(appName, startApp, compact))
+                    return .peer(.name(peerName), .appStart(appName, startApp, mode))
                 } else {
                     return nil
                 }
@@ -655,7 +699,7 @@ private func resolveInternalUrl(context: AccountContext, url: ParsedInternalUrl)
                         textInputState = ChatTextInputState(inputText: NSAttributedString(string: text))
                     }
                     if let attach = attach {
-                        return context.engine.peers.resolvePeerByName(name: attach)
+                        return context.engine.peers.resolvePeerByName(name: attach, referrer: nil)
                         |> map { result -> ResolveInternalUrlResult in
                             switch result {
                             case .progress:
@@ -679,7 +723,11 @@ private func resolveInternalUrl(context: AccountContext, url: ParsedInternalUrl)
             let resolvedPeer: Signal<ResolvePeerResult, NoError>
             switch reference {
             case let .name(name):
-                resolvedPeer = context.engine.peers.resolvePeerByName(name: name)
+                var referrer: String?
+                if case let .referrer(value) = parameter {
+                    referrer = value
+                }
+                resolvedPeer = context.engine.peers.resolvePeerByName(name: name, referrer: referrer)
                 |> mapToSignal { result -> Signal<ResolvePeerResult, NoError> in
                     switch result {
                     case .progress:
@@ -732,7 +780,7 @@ private func resolveInternalUrl(context: AccountContext, url: ParsedInternalUrl)
                             case let .gameStart(game):
                                 return .single(.result(.gameStart(peerId: peer.id, game: game)))
                             case let .attachBotStart(name, payload):
-                                return context.engine.peers.resolvePeerByName(name: name)
+                                return context.engine.peers.resolvePeerByName(name: name, referrer: nil)
                                 |> mapToSignal { botPeerResult -> Signal<ResolveInternalUrlResult, NoError> in
                                     switch botPeerResult {
                                     case .progress:
@@ -745,10 +793,10 @@ private func resolveInternalUrl(context: AccountContext, url: ParsedInternalUrl)
                                         }
                                     }
                                 }
-                            case let .appStart(name, payload, compact):
+                            case let .appStart(name, payload, mode):
                                 if name.isEmpty {
                                     if case let .user(user) = peer, let botInfo = user.botInfo, botInfo.flags.contains(.hasWebApp) {
-                                        return .single(.result(.peer(peer._asPeer(), .withBotApp(ChatControllerInitialBotAppStart(botApp: nil, payload: payload, justInstalled: false, compact: compact)))))
+                                        return .single(.result(.peer(peer._asPeer(), .withBotApp(ChatControllerInitialBotAppStart(botApp: nil, payload: payload, justInstalled: false, mode: mode)))))
                                     } else {
                                         return .single(.result(.peer(peer._asPeer(), .chat(textInputState: nil, subject: nil, peekData: nil))))
                                     }
@@ -760,7 +808,7 @@ private func resolveInternalUrl(context: AccountContext, url: ParsedInternalUrl)
                                     }
                                     |> mapToSignal { botApp -> Signal<ResolveInternalUrlResult, NoError> in
                                         if let botApp {
-                                            return .single(.result(.peer(peer._asPeer(), .withBotApp(ChatControllerInitialBotAppStart(botApp: botApp, payload: payload, justInstalled: false, compact: compact)))))
+                                            return .single(.result(.peer(peer._asPeer(), .withBotApp(ChatControllerInitialBotAppStart(botApp: botApp, payload: payload, justInstalled: false, mode: mode)))))
                                         } else {
                                             return .single(.result(.peer(peer._asPeer(), .chat(textInputState: nil, subject: nil, peekData: nil))))
                                         }
@@ -848,6 +896,8 @@ private func resolveInternalUrl(context: AccountContext, url: ParsedInternalUrl)
                                         return .result(.boost(peerId: peer.id, status: boostStatus, myBoostStatus: myBoostStatus))
                                     }
                                 )
+                            case .referrer:
+                                return .single(.result(.peer(peer._asPeer(), .chat(textInputState: nil, subject: nil, peekData: nil))))
                         }
                     } else {
                         return .single(.result(.peer(peer._asPeer(), .chat(textInputState: nil, subject: nil, peekData: nil))))
@@ -1027,7 +1077,7 @@ private func resolveInternalUrl(context: AccountContext, url: ParsedInternalUrl)
                     choose.insert(.channels)
                 }
             }
-            return context.engine.peers.resolvePeerByName(name: name)
+            return context.engine.peers.resolvePeerByName(name: name, referrer: nil)
             |> mapToSignal { result -> Signal<ResolveInternalUrlResult, NoError> in
                 switch result {
                 case .progress:
@@ -1042,6 +1092,11 @@ private func resolveInternalUrl(context: AccountContext, url: ParsedInternalUrl)
             }
         case let .premiumGiftCode(slug):
             return .single(.result(.premiumGiftCode(slug: slug)))
+        case let .collectible(slug):
+            return .single(.progress) |> then(context.engine.payments.getUniqueStarGift(slug: slug)
+            |> map { gift -> ResolveInternalUrlResult in
+                return .result(.collectible(gift: gift))
+            })
         case let .messageLink(slug):
             return .single(.progress)
             |> then(context.engine.peers.resolveMessageLink(slug: slug)
@@ -1100,14 +1155,14 @@ public func parseProxyUrl(sharedContext: SharedAccountContext, url: String) -> (
         for scheme in schemes {
             let basePrefix = scheme + basePath + "/"
             if url.lowercased().hasPrefix(basePrefix) {
-                if let internalUrl = parseInternalUrl(sharedContext: sharedContext, query: String(url[basePrefix.endIndex...])), case let .proxy(host, port, username, password, secret) = internalUrl {
+                if let internalUrl = parseInternalUrl(sharedContext: sharedContext, context: nil, query: String(url[basePrefix.endIndex...])), case let .proxy(host, port, username, password, secret) = internalUrl {
                     return (host, port, username, password, secret)
                 }
             }
         }
     }
     if let parsedUrl = URL(string: url), parsedUrl.scheme == "tg", let host = parsedUrl.host, let query = parsedUrl.query {
-        if let internalUrl = parseInternalUrl(sharedContext: sharedContext, query: host + "?" + query), case let .proxy(host, port, username, password, secret) = internalUrl {
+        if let internalUrl = parseInternalUrl(sharedContext: sharedContext, context: nil, query: host + "?" + query), case let .proxy(host, port, username, password, secret) = internalUrl {
             return (host, port, username, password, secret)
         }
     }
@@ -1121,14 +1176,14 @@ public func parseStickerPackUrl(sharedContext: SharedAccountContext, url: String
         for scheme in schemes {
             let basePrefix = scheme + basePath + "/"
             if url.lowercased().hasPrefix(basePrefix) {
-                if let internalUrl = parseInternalUrl(sharedContext: sharedContext, query: String(url[basePrefix.endIndex...])), case let .stickerPack(name, _) = internalUrl {
+                if let internalUrl = parseInternalUrl(sharedContext: sharedContext, context: nil, query: String(url[basePrefix.endIndex...])), case let .stickerPack(name, _) = internalUrl {
                     return name
                 }
             }
         }
     }
     if let parsedUrl = URL(string: url), parsedUrl.scheme == "tg", let host = parsedUrl.host, let query = parsedUrl.query {
-        if let internalUrl = parseInternalUrl(sharedContext: sharedContext, query: host + "?" + query), case let .stickerPack(name, _) = internalUrl {
+        if let internalUrl = parseInternalUrl(sharedContext: sharedContext, context: nil, query: host + "?" + query), case let .stickerPack(name, _) = internalUrl {
             return name
         }
     }
@@ -1142,14 +1197,14 @@ public func parseWallpaperUrl(sharedContext: SharedAccountContext, url: String) 
         for scheme in schemes {
             let basePrefix = scheme + basePath + "/"
             if url.lowercased().hasPrefix(basePrefix) {
-                if let internalUrl = parseInternalUrl(sharedContext: sharedContext, query: String(url[basePrefix.endIndex...])), case let .wallpaper(wallpaper) = internalUrl {
+                if let internalUrl = parseInternalUrl(sharedContext: sharedContext, context: nil, query: String(url[basePrefix.endIndex...])), case let .wallpaper(wallpaper) = internalUrl {
                     return wallpaper
                 }
             }
         }
     }
     if let parsedUrl = URL(string: url), parsedUrl.scheme == "tg", let host = parsedUrl.host, let query = parsedUrl.query {
-        if let internalUrl = parseInternalUrl(sharedContext: sharedContext, query: host + "?" + query), case let .wallpaper(wallpaper) = internalUrl {
+        if let internalUrl = parseInternalUrl(sharedContext: sharedContext, context: nil, query: host + "?" + query), case let .wallpaper(wallpaper) = internalUrl {
             return wallpaper
         }
     }
@@ -1157,20 +1212,20 @@ public func parseWallpaperUrl(sharedContext: SharedAccountContext, url: String) 
     return nil
 }
 
-public func parseAdUrl(sharedContext: SharedAccountContext, url: String) -> ParsedInternalUrl? {
+public func parseAdUrl(sharedContext: SharedAccountContext, context: AccountContext, url: String) -> ParsedInternalUrl? {
     let schemes = ["http://", "https://", ""]
     for basePath in baseTelegramMePaths {
         for scheme in schemes {
             let basePrefix = scheme + basePath + "/"
             if url.lowercased().hasPrefix(basePrefix) {
-                if let internalUrl = parseInternalUrl(sharedContext: sharedContext, query: String(url[basePrefix.endIndex...])), case .peer = internalUrl {
+                if let internalUrl = parseInternalUrl(sharedContext: sharedContext, context: context, query: String(url[basePrefix.endIndex...])), case .peer = internalUrl {
                     return internalUrl
                 }
             }
         }
     }
     if let parsedUrl = URL(string: url), parsedUrl.scheme == "tg", let host = parsedUrl.host, let query = parsedUrl.query {
-        if let internalUrl = parseInternalUrl(sharedContext: sharedContext, query: host + "?" + query), case .peer = internalUrl {
+        if let internalUrl = parseInternalUrl(sharedContext: sharedContext, context: context, query: host + "?" + query), case .peer = internalUrl {
             return internalUrl
         }
     }
@@ -1178,13 +1233,13 @@ public func parseAdUrl(sharedContext: SharedAccountContext, url: String) -> Pars
     return nil
 }
 
-public func parseFullInternalUrl(sharedContext: SharedAccountContext, url: String) -> ParsedInternalUrl? {
+public func parseFullInternalUrl(sharedContext: SharedAccountContext, context: AccountContext, url: String) -> ParsedInternalUrl? {
     let schemes = ["http://", "https://", ""]
     for basePath in baseTelegramMePaths {
         for scheme in schemes {
             let basePrefix = scheme + basePath + "/"
             if url.lowercased().hasPrefix(basePrefix) {
-                if let internalUrl = parseInternalUrl(sharedContext: sharedContext, query: String(url[basePrefix.endIndex...])) {
+                if let internalUrl = parseInternalUrl(sharedContext: sharedContext, context: context, query: String(url[basePrefix.endIndex...])) {
                     return internalUrl
                 }
             }
@@ -1270,7 +1325,7 @@ public func resolveUrlImpl(context: AccountContext, peerId: PeerId?, url: String
                         }
                     }
                     if url.lowercased().hasPrefix(basePrefix) {
-                        if let internalUrl = parseInternalUrl(sharedContext: context.sharedContext, query: String(url[basePrefix.endIndex...])) {
+                        if let internalUrl = parseInternalUrl(sharedContext: context.sharedContext, context: context, query: String(url[basePrefix.endIndex...])) {
                             return resolveInternalUrl(context: context, url: internalUrl)
                             |> map { result -> ResolveUrlResult in
                                 switch result {
@@ -1347,4 +1402,42 @@ public func cleanDomain(url: String) -> (domain: String, fullUrl: String) {
     } else {
         return (url, url)
     }
+}
+
+private func hTmeParseDuration(_ durationStr: String) -> Int {
+    // Optional hours, optional minutes, optional seconds
+    let pattern = "^(?:(\\d+)h)?(?:(\\d+)m)?(?:(\\d+)s)?$"
+    
+    // Attempt to create the regex
+    guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else {
+        // If regex creation fails, fallback to integer parsing
+        return Int(durationStr) ?? 0
+    }
+    
+    // Search for a match
+    let range = NSRange(durationStr.startIndex..., in: durationStr)
+    if let match = regex.firstMatch(in: durationStr, options: [], range: range) {
+        // Extract capture groups for hours, minutes, and seconds
+        let hoursRange = match.range(at: 1)
+        let minutesRange = match.range(at: 2)
+        let secondsRange = match.range(at: 3)
+        
+        // Helper to safely extract integer from a matched range
+        func intValue(_ nsRange: NSRange) -> Int {
+            guard nsRange.location != NSNotFound,
+                  let substringRange = Range(nsRange, in: durationStr) else {
+                return 0
+            }
+            return Int(durationStr[substringRange]) ?? 0
+        }
+        
+        let hours = intValue(hoursRange)
+        let minutes = intValue(minutesRange)
+        let seconds = intValue(secondsRange)
+        
+        return hours * 3600 + minutes * 60 + seconds
+    }
+    
+    // If the string didn't match the pattern, parse it as a positive integer
+    return Int(durationStr) ?? 0
 }

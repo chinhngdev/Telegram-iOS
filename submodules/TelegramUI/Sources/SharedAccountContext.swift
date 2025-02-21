@@ -74,6 +74,9 @@ import GiftOptionsScreen
 import GiftViewScreen
 import StarsIntroScreen
 import ContentReportScreen
+import AffiliateProgramSetupScreen
+import GalleryUI
+import ShareController
 
 private final class AccountUserInterfaceInUseContext {
     let subscribers = Bag<(Bool) -> Void>()
@@ -173,6 +176,7 @@ public final class SharedAccountContextImpl: SharedAccountContext {
     private let callState = Promise<PresentationCallState?>(nil)
     private var awaitingCallConnectionDisposable: Disposable?
     private var callPeerDisposable: Disposable?
+    private var callIsConferenceDisposable: Disposable?
     
     private var groupCallController: VoiceChatController?
     public var currentGroupCallController: ViewController? {
@@ -803,22 +807,72 @@ public final class SharedAccountContextImpl: SharedAccountContext {
                 }
                     
                 if call !== self.call {
+                    let previousCall = self.call
                     self.call = call
                     
                     self.callController?.dismiss()
                     self.callController = nil
                     self.hasOngoingCall.set(false)
+                    self.callState.set(.single(nil))
+                    
+                    if let previousCall, let groupCallController = self.groupCallController {
+                        var matches = false
+                        switch groupCallController.call {
+                        case let .conferenceSource(conferenceSource):
+                            if conferenceSource === previousCall {
+                                matches = true
+                            }
+                        case let .group(groupCall):
+                            if (groupCall as? PresentationGroupCallImpl)?.upgradedConferenceCall === previousCall {
+                                matches = true
+                            }
+                        }
+                        
+                        if matches {
+                            self.groupCallController = nil
+                            groupCallController.dismiss(closing: true, manual: false)
+                        }
+                    }
                     
                     self.notificationController?.setBlocking(nil)
                     
                     self.callPeerDisposable?.dispose()
                     self.callPeerDisposable = nil
+                    self.callIsConferenceDisposable?.dispose()
+                    self.callIsConferenceDisposable = nil
                     
                     if let call {
-                        self.callState.set(call.state
-                        |> map(Optional.init))
+                        if call.conferenceStateValue == nil && call.conferenceCall == nil {
+                            self.callState.set(call.state
+                            |> map(Optional.init))
+                        }
+                        
                         self.hasOngoingCall.set(true)
                         setNotificationCall(call)
+                        
+                        self.callIsConferenceDisposable = (call.conferenceState
+                        |> filter { $0 != nil }
+                        |> take(1)
+                        |> deliverOnMainQueue).startStrict(next: { [weak self] _ in
+                            guard let self else {
+                                return
+                            }
+                            guard let call = self.call else {
+                                return
+                            }
+                            guard let callController = self.callController, callController.call === call else {
+                                if self.callController == nil, call.conferenceStateValue != nil {
+                                    self.callState.set(.single(nil))
+                                    self.presentControllerWithCurrentCall()
+                                    self.notificationController?.setBlocking(nil)
+                                }
+                                return
+                            }
+                            if call.conferenceStateValue != nil {
+                                self.callState.set(.single(nil))
+                                self.presentControllerWithCurrentCall()
+                            }
+                        })
                         
                         if call.isOutgoing {
                             self.presentControllerWithCurrentCall()
@@ -884,7 +938,7 @@ public final class SharedAccountContextImpl: SharedAccountContext {
             self.groupCallDisposable = (callManager.currentGroupCallSignal
             |> deliverOnMainQueue).start(next: { [weak self] call in
                 if let strongSelf = self {
-                    if call !== strongSelf.groupCallController?.call {
+                    if call.flatMap(VideoChatCall.group) != strongSelf.groupCallController?.call {
                         strongSelf.groupCallController?.dismiss(closing: true, manual: false)
                         strongSelf.groupCallController = nil
                         strongSelf.hasOngoingCall.set(false)
@@ -912,13 +966,13 @@ public final class SharedAccountContextImpl: SharedAccountContext {
                             } else {
                                 strongSelf.hasGroupCallOnScreenPromise.set(true)
                                 
-                                let _ = (makeVoiceChatControllerInitialData(sharedContext: strongSelf, accountContext: call.accountContext, call: call)
+                                let _ = (makeVoiceChatControllerInitialData(sharedContext: strongSelf, accountContext: call.accountContext, call: .group(call))
                                 |> deliverOnMainQueue).start(next: { [weak strongSelf, weak navigationController] initialData in
                                     guard let strongSelf, let navigationController else {
                                         return
                                     }
                                     
-                                    let groupCallController = makeVoiceChatController(sharedContext: strongSelf, accountContext: call.accountContext, call: call, initialData: initialData)
+                                    let groupCallController = makeVoiceChatController(sharedContext: strongSelf, accountContext: call.accountContext, call: .group(call), initialData: initialData, sourceCallController: nil)
                                     groupCallController.onViewDidAppear = { [weak strongSelf] in
                                         if let strongSelf {
                                             strongSelf.hasGroupCallOnScreenPromise.set(true)
@@ -935,7 +989,7 @@ public final class SharedAccountContextImpl: SharedAccountContext {
                                     navigationController.pushViewController(groupCallController)
                                 })
                             }
-                                
+                            
                             strongSelf.hasOngoingCall.set(true)
                         } else {
                             strongSelf.hasOngoingCall.set(false)
@@ -944,31 +998,31 @@ public final class SharedAccountContextImpl: SharedAccountContext {
                 }
             })
             
-            let callSignal: Signal<PresentationCall?, NoError> = .single(nil)
+            let callSignal: Signal<(PresentationCall?, PresentationGroupCall?), NoError> = .single((nil, nil))
             |> then(
                 callManager.currentCallSignal
                 |> deliverOnMainQueue
-                |> mapToSignal { call -> Signal<PresentationCall?, NoError> in
+                |> mapToSignal { call -> Signal<(PresentationCall?, PresentationGroupCall?), NoError> in
                     guard let call else {
-                        return .single(nil)
+                        return .single((nil, nil))
                     }
                     return call.state
-                    |> map { [weak call] state -> PresentationCall? in
+                    |> map { [weak call] state -> (PresentationCall?, PresentationGroupCall?) in
                         guard let call else {
-                            return nil
+                            return (nil, nil)
                         }
                         switch state.state {
                         case .ringing:
-                            return nil
+                            return (nil, nil)
                         case .terminating, .terminated:
-                            return nil
+                            return (nil, nil)
                         default:
-                            return call
+                            return (call, nil)
                         }
                     }
                 }
                 |> distinctUntilChanged(isEqual: { lhs, rhs in
-                    return lhs === rhs
+                    return lhs.0 === rhs.0 && lhs.1 === rhs.1
                 })
             )
             let groupCallSignal: Signal<PresentationGroupCall?, NoError> = .single(nil)
@@ -982,8 +1036,15 @@ public final class SharedAccountContextImpl: SharedAccountContext {
                 self.hasGroupCallOnScreenPromise.get()
             ).start(next: { [weak self] call, groupCall, hasGroupCallOnScreen in
                 if let strongSelf = self {
+                    var (call, conferenceCall) = call
+                    var groupCall = groupCall
+                    if let conferenceCall {
+                        call = nil
+                        groupCall = conferenceCall
+                    }
+                    
                     let statusBarContent: CallStatusBarNodeImpl.Content?
-                    if let call = call {
+                    if let call, !hasGroupCallOnScreen {
                         statusBarContent = .call(strongSelf, call.context.account, call)
                     } else if let groupCall = groupCall, !hasGroupCallOnScreen {
                         statusBarContent = .groupCall(strongSelf, groupCall.account, groupCall)
@@ -1018,7 +1079,11 @@ public final class SharedAccountContextImpl: SharedAccountContext {
                     if callController.isNodeLoaded {
                         mainWindow.hostView.containerView.endEditing(true)
                         if callController.view.superview == nil {
-                            mainWindow.present(callController, on: .calls)
+                            if useFlatModalCallsPresentation(context: callController.call.context) {
+                                (mainWindow.viewController as? NavigationController)?.pushViewController(callController)
+                            } else {
+                                mainWindow.present(callController, on: .calls)
+                            }
                         } else {
                             callController.expandFromPipIfPossible()
                         }
@@ -1176,30 +1241,126 @@ public final class SharedAccountContextImpl: SharedAccountContext {
             return
         }
         
-        if let currentCallController = self.callController {
-            if currentCallController.call === call {
-                self.navigateToCurrentCall()
-                return
-            } else {
+        if call.conferenceStateValue != nil {
+            if let groupCallController = self.groupCallController {
+                if groupCallController.call == call.conferenceCall.flatMap(VideoChatCall.group) || groupCallController.call == .conferenceSource(call) {
+                    return
+                }
+                groupCallController.dismiss(closing: true, manual: false)
+                self.groupCallController = nil
+            }
+            var transitioniongCallController: CallController?
+            if let callController = self.callController {
+                transitioniongCallController = callController
+                if callController.navigationPresentation != .flatModal {
+                    callController.dismissWithoutAnimation()
+                }
                 self.callController = nil
-                currentCallController.dismiss()
             }
-        }
-        
-        self.mainWindow?.hostView.containerView.endEditing(true)
-        let callController = CallController(sharedContext: self, account: call.context.account, call: call, easyDebugAccess: !GlobalExperimentalSettings.isAppStoreBuild)
-        self.callController = callController
-        callController.restoreUIForPictureInPicture = { [weak self, weak callController] completion in
-            guard let self, let callController else {
-                completion(false)
-                return
+            
+            let groupCall: VideoChatCall
+            if let conferenceCall = call.conferenceCall, case .ready = call.conferenceStateValue {
+                groupCall = .group(conferenceCall)
+            } else {
+                groupCall = .conferenceSource(call)
             }
-            if callController.window == nil {
+            let _ = (makeVoiceChatControllerInitialData(sharedContext: self, accountContext: call.context, call: groupCall)
+            |> deliverOnMainQueue).start(next: { [weak self, weak transitioniongCallController] initialData in
+                guard let self else {
+                    return
+                }
+                guard let navigationController = self.mainWindow?.viewController as? NavigationController else {
+                    return
+                }
+                guard let call = self.call else {
+                    return
+                }
+                
+                let groupCall: VideoChatCall
+                if let conferenceCall = call.conferenceCall, case .ready = call.conferenceStateValue {
+                    groupCall = .group(conferenceCall)
+                } else {
+                    groupCall = .conferenceSource(call)
+                }
+                
+                let groupCallController = makeVoiceChatController(sharedContext: self, accountContext: call.context, call: groupCall, initialData: initialData, sourceCallController: transitioniongCallController)
+                groupCallController.onViewDidAppear = { [weak self] in
+                    if let self {
+                        self.hasGroupCallOnScreenPromise.set(true)
+                    }
+                }
+                groupCallController.onViewDidDisappear = { [weak self] in
+                    if let self {
+                        self.hasGroupCallOnScreenPromise.set(false)
+                    }
+                }
+                groupCallController.navigationPresentation = .flatModal
+                groupCallController.parentNavigationController = navigationController
+                self.groupCallController = groupCallController
+                
+                transitioniongCallController?.onViewDidAppear = nil
+                transitioniongCallController?.onViewDidDisappear = nil
+                
+                self.hasGroupCallOnScreenPromise.set(true)
+                if let transitioniongCallController, let navigationController = transitioniongCallController.navigationController as? NavigationController {
+                    var viewControllers = navigationController.viewControllers
+                    if let index = viewControllers.firstIndex(where: { $0 === transitioniongCallController }) {
+                        viewControllers.insert(groupCallController, at: index)
+                        navigationController.setViewControllers(viewControllers, animated: false)
+                        viewControllers.remove(at: index + 1)
+                        navigationController.setViewControllers(viewControllers, animated: false)
+                    } else {
+                        navigationController.pushViewController(groupCallController)
+                    }
+                } else {
+                    navigationController.pushViewController(groupCallController)
+                }
+            })
+        } else {
+            if let currentCallController = self.callController {
+                if currentCallController.call === call {
+                    self.navigateToCurrentCall()
+                    return
+                } else {
+                    self.callController = nil
+                    currentCallController.dismiss()
+                }
+            }
+            
+            self.mainWindow?.hostView.containerView.endEditing(true)
+            let callController = CallController(sharedContext: self, account: call.context.account, call: call, easyDebugAccess: !GlobalExperimentalSettings.isAppStoreBuild)
+            self.callController = callController
+            callController.restoreUIForPictureInPicture = { [weak self, weak callController] completion in
+                guard let self, let callController else {
+                    completion(false)
+                    return
+                }
+                if callController.window == nil {
+                    if useFlatModalCallsPresentation(context: callController.call.context) {
+                        (self.mainWindow?.viewController as? NavigationController)?.pushViewController(callController)
+                    } else {
+                        self.mainWindow?.present(callController, on: .calls)
+                    }
+                }
+                completion(true)
+            }
+            callController.onViewDidAppear = { [weak self] in
+                if let self {
+                    self.hasGroupCallOnScreenPromise.set(true)
+                }
+            }
+            callController.onViewDidDisappear = { [weak self] in
+                if let self {
+                    self.hasGroupCallOnScreenPromise.set(false)
+                }
+            }
+            if useFlatModalCallsPresentation(context: callController.call.context) {
+                self.hasGroupCallOnScreenPromise.set(true)
+                (self.mainWindow?.viewController as? NavigationController)?.pushViewController(callController)
+            } else {
                 self.mainWindow?.present(callController, on: .calls)
             }
-            completion(true)
         }
-        self.mainWindow?.present(callController, on: .calls)
     }
     
     public func updateNotificationTokensRegistration() {
@@ -1431,7 +1592,12 @@ public final class SharedAccountContextImpl: SharedAccountContext {
         if let callController = self.callController {
             if callController.isNodeLoaded && callController.view.superview == nil {
                 mainWindow.hostView.containerView.endEditing(true)
-                mainWindow.present(callController, on: .calls)
+                
+                if useFlatModalCallsPresentation(context: callController.call.context) {
+                    (mainWindow.viewController as? NavigationController)?.pushViewController(callController)
+                } else {
+                    mainWindow.present(callController, on: .calls)
+                }
             }
         } else if let groupCallController = self.groupCallController {
             if groupCallController.isNodeLoaded && groupCallController.view.superview == nil {
@@ -1614,8 +1780,8 @@ public final class SharedAccountContextImpl: SharedAccountContext {
         return resolveUrlImpl(context: context, peerId: peerId, url: url, skipUrlAuth: skipUrlAuth)
     }
     
-    public func openResolvedUrl(_ resolvedUrl: ResolvedUrl, context: AccountContext, urlContext: OpenURLContext, navigationController: NavigationController?, forceExternal: Bool, openPeer: @escaping (EnginePeer, ChatControllerInteractionNavigateToPeer) -> Void, sendFile: ((FileMediaReference) -> Void)?, sendSticker: ((FileMediaReference, UIView, CGRect) -> Bool)?, sendEmoji: ((String, ChatTextInputTextCustomEmojiAttribute) -> Void)?, requestMessageActionUrlAuth: ((MessageActionUrlSubject) -> Void)?, joinVoiceChat: ((PeerId, String?, CachedChannelData.ActiveCall) -> Void)?, present: @escaping (ViewController, Any?) -> Void, dismissInput: @escaping () -> Void, contentContext: Any?, progress: Promise<Bool>?, completion: (() -> Void)?) {
-        openResolvedUrlImpl(resolvedUrl, context: context, urlContext: urlContext, navigationController: navigationController, forceExternal: forceExternal, openPeer: openPeer, sendFile: sendFile, sendSticker: sendSticker, sendEmoji: sendEmoji, requestMessageActionUrlAuth: requestMessageActionUrlAuth, joinVoiceChat: joinVoiceChat, present: present, dismissInput: dismissInput, contentContext: contentContext, progress: progress, completion: completion)
+    public func openResolvedUrl(_ resolvedUrl: ResolvedUrl, context: AccountContext, urlContext: OpenURLContext, navigationController: NavigationController?, forceExternal: Bool, forceUpdate: Bool, openPeer: @escaping (EnginePeer, ChatControllerInteractionNavigateToPeer) -> Void, sendFile: ((FileMediaReference) -> Void)?, sendSticker: ((FileMediaReference, UIView, CGRect) -> Bool)?, sendEmoji: ((String, ChatTextInputTextCustomEmojiAttribute) -> Void)?, requestMessageActionUrlAuth: ((MessageActionUrlSubject) -> Void)?, joinVoiceChat: ((PeerId, String?, CachedChannelData.ActiveCall) -> Void)?, present: @escaping (ViewController, Any?) -> Void, dismissInput: @escaping () -> Void, contentContext: Any?, progress: Promise<Bool>?, completion: (() -> Void)?) {
+        openResolvedUrlImpl(resolvedUrl, context: context, urlContext: urlContext, navigationController: navigationController, forceExternal: forceExternal, forceUpdate: forceUpdate, openPeer: openPeer, sendFile: sendFile, sendSticker: sendSticker, sendEmoji: sendEmoji, requestMessageActionUrlAuth: requestMessageActionUrlAuth, joinVoiceChat: joinVoiceChat, present: present, dismissInput: dismissInput, contentContext: contentContext, progress: progress, completion: completion)
     }
     
     public func makeDeviceContactInfoController(context: ShareControllerAccountContext, environment: ShareControllerEnvironment, subject: DeviceContactInfoSubject, completed: (() -> Void)?, cancelled: (() -> Void)?) -> ViewController {
@@ -1781,6 +1947,8 @@ public final class SharedAccountContextImpl: SharedAccountContext {
         }, openJoinLink: { _ in
         }, openWebView: { _, _, _, _ in
         }, activateAdAction: { _, _, _, _ in
+        }, adContextAction: { _, _, _ in
+        }, removeAd: { _ in
         }, openRequestedPeerSelection: { _, _, _, _ in
         }, saveMediaToFiles: { _ in
         }, openNoAdsDemo: {
@@ -1793,6 +1961,8 @@ public final class SharedAccountContextImpl: SharedAccountContext {
         }, openAgeRestrictedMessageMedia: { _, _ in
         }, playMessageEffect: { _ in
         }, editMessageFactCheck: { _ in
+        }, sendGift: { _ in
+        }, openUniqueGift: { _ in
         }, requestMessageUpdate: { _, _ in
         }, cancelInteractiveKeyboardGestures: {
         }, dismissTextInput: {
@@ -1924,8 +2094,8 @@ public final class SharedAccountContextImpl: SharedAccountContext {
         return inputPanelNode
     }
     
-    public func makeHashtagSearchController(context: AccountContext, peer: EnginePeer?, query: String, all: Bool) -> ViewController {
-        return HashtagSearchController(context: context, peer: peer, query: query, all: all)
+    public func makeHashtagSearchController(context: AccountContext, peer: EnginePeer?, query: String, stories: Bool, forceDark: Bool) -> ViewController {
+        return HashtagSearchController(context: context, peer: peer, query: query, mode: stories ? .chatOnly : .generic, stories: stories, forceDark: forceDark)
     }
     
     public func makeStorySearchController(context: AccountContext, scope: StorySearchControllerScope, listContext: SearchStoryListContext?) -> ViewController {
@@ -2208,7 +2378,7 @@ public final class SharedAccountContextImpl: SharedAccountContext {
         let presentationData = context.sharedContext.currentPresentationData.with { $0 }
 
         var presentBirthdayPickerImpl: (() -> Void)?
-        let starsMode: ContactSelectionControllerMode = .starsGifting(birthdays: birthdays, hasActions: false)
+        let starsMode: ContactSelectionControllerMode = .starsGifting(birthdays: birthdays, hasActions: false, showSelf: false, selfSubtitle: nil)
     
         let contactOptions: Signal<[ContactListAdditionalOption], NoError> = context.engine.data.subscribe(TelegramEngine.EngineData.Item.Peer.Birthday(id: context.account.peerId))
         |> map { birthday in
@@ -2276,22 +2446,61 @@ public final class SharedAccountContextImpl: SharedAccountContext {
     public func makePremiumGiftController(context: AccountContext, source: PremiumGiftSource, completion: (([EnginePeer.Id]) -> Void)?) -> ViewController {
         let presentationData = context.sharedContext.currentPresentationData.with { $0 }
 
+        var presentExportAlertImpl: (() -> Void)?
+        var presentTransferAlertImpl: ((EnginePeer) -> Void)?
+        
         var presentBirthdayPickerImpl: (() -> Void)?
         var mode: ContactSelectionControllerMode = .generic
         var currentBirthdays: [EnginePeer.Id: TelegramBirthday]?
         
-        if case let .chatList(birthdays) = source, let birthdays, !birthdays.isEmpty {
-            mode = .starsGifting(birthdays: birthdays, hasActions: true)
+        if case let .starGiftTransfer(birthdays, _, _, _, _, showSelf) = source {
+            mode = .starsGifting(birthdays: birthdays, hasActions: false, showSelf: showSelf, selfSubtitle: presentationData.strings.Premium_Gift_ContactSelection_TransferSelf)
             currentBirthdays = birthdays
-        } else if case let .settings(birthdays) = source, let birthdays, !birthdays.isEmpty {
-            mode = .starsGifting(birthdays: birthdays, hasActions: true)
+        } else if case let .chatList(birthdays) = source {
+            mode = .starsGifting(birthdays: birthdays, hasActions: true, showSelf: true, selfSubtitle: presentationData.strings.Premium_Gift_ContactSelection_BuySelf)
+            currentBirthdays = birthdays
+        } else if case let .settings(birthdays) = source {
+            mode = .starsGifting(birthdays: birthdays, hasActions: true, showSelf: true, selfSubtitle: presentationData.strings.Premium_Gift_ContactSelection_BuySelf)
             currentBirthdays = birthdays
         } else {
-            mode = .starsGifting(birthdays: nil, hasActions: true)
+            mode = .starsGifting(birthdays: nil, hasActions: true, showSelf: false, selfSubtitle: nil)
         }
         
+        var allowChannelsInSearch = false
+        var isChannelGift = false
         let contactOptions: Signal<[ContactListAdditionalOption], NoError>
-        if currentBirthdays != nil || "".isEmpty {
+        if case let .starGiftTransfer(_, reference, _, _, canExportDate, _) = source {
+            allowChannelsInSearch = true
+            if case let .peer(peerId, _) = reference, peerId.namespace == Namespaces.Peer.CloudChannel {
+                isChannelGift = true
+            }
+            var subtitle: String?
+            if let canExportDate {
+                let currentTime = Int32(CFAbsoluteTimeGetCurrent() + kCFAbsoluteTimeIntervalSince1970)
+                if currentTime > canExportDate {
+                    subtitle = nil
+                } else {
+                    let delta = canExportDate - currentTime
+                    let days: Int32 = Int32(ceil(Float(delta) / 86400.0))
+                    let daysString = presentationData.strings.Gift_Transfer_SendUnlocks_Days(days)
+                    subtitle = presentationData.strings.Gift_Transfer_SendUnlocks(daysString).string
+                }
+                contactOptions = .single([
+                    ContactListAdditionalOption(
+                        title: presentationData.strings.Gift_Transfer_SendViaBlockchain,
+                        subtitle: subtitle,
+                        icon: .generic(UIImage(bundleImageName: "Item List/Ton")!),
+                        style: .generic,
+                        action: {
+                            presentExportAlertImpl?()
+                        },
+                        clearHighlightAutomatically: true
+                    )
+                ])
+            } else {
+                contactOptions = .single([])
+            }
+        } else if currentBirthdays != nil || "".isEmpty {
             contactOptions = context.engine.data.subscribe(TelegramEngine.EngineData.Item.Peer.Birthday(id: context.account.peerId))
             |> map { birthday in
                 if birthday == nil {
@@ -2315,14 +2524,22 @@ public final class SharedAccountContextImpl: SharedAccountContext {
         var openProfileImpl: ((EnginePeer) -> Void)?
         var sendMessageImpl: ((EnginePeer) -> Void)?
         
+        let title: String
+        if case .starGiftTransfer = source {
+            title = presentationData.strings.Gift_Transfer_Title
+        } else {
+            title = presentationData.strings.Gift_PremiumOrStars_Title
+        }
+        
         let options = Promise<[PremiumGiftCodeOption]>()
         options.set(context.engine.payments.premiumGiftCodeOptions(peerId: nil))
         let controller = context.sharedContext.makeContactSelectionController(ContactSelectionControllerParams(
             context: context,
             mode: mode,
             autoDismiss: false,
-            title: { strings in return presentationData.strings.Gift_PremiumOrStars_Title },
+            title: { _ in return title },
             options: contactOptions,
+            allowChannelsInSearch: allowChannelsInSearch,
             openProfile: { peer in
                 openProfileImpl?(peer)
             },
@@ -2330,16 +2547,18 @@ public final class SharedAccountContextImpl: SharedAccountContext {
                 sendMessageImpl?(peer)
             }
         ))
+        controller.navigationPresentation = .modal
+        
         let _ = combineLatest(queue: Queue.mainQueue(), controller.result, options.get())
         .startStandalone(next: { [weak controller] result, options in
             if let (peers, _, _, _, _, _) = result, let contactPeer = peers.first, case let .peer(peer, _, _) = contactPeer, let starsContext = context.starsContext {
-                let premiumOptions = options.filter { $0.users == 1 }.map { CachedPremiumGiftOption(months: $0.months, currency: $0.currency, amount: $0.amount, botUrl: "", storeProductId: $0.storeProductId) }
-                let giftController = GiftOptionsScreen(context: context, starsContext: starsContext, peerId: peer.id, premiumOptions: premiumOptions)
-                giftController.navigationPresentation = .modal
-                controller?.push(giftController)
-                
-                if case .chatList = source, let _ = currentBirthdays {
-                    let _ = context.engine.notices.dismissServerProvidedSuggestion(suggestion: .todayBirthdays).startStandalone()
+                if case .starGiftTransfer = source {
+                    presentTransferAlertImpl?(EnginePeer(peer))
+                } else {
+                    let premiumOptions = options.filter { $0.users == 1 }.map { CachedPremiumGiftOption(months: $0.months, currency: $0.currency, amount: $0.amount, botUrl: "", storeProductId: $0.storeProductId) }
+                    let giftController = GiftOptionsScreen(context: context, starsContext: starsContext, peerId: peer.id, premiumOptions: premiumOptions, hasBirthday: currentBirthdays?[peer.id] != nil)
+                    giftController.navigationPresentation = .modal
+                    controller?.push(giftController)
                 }
             }
         })
@@ -2366,7 +2585,7 @@ public final class SharedAccountContextImpl: SharedAccountContext {
                 updatedPresentationData: nil,
                 peer: peer._asPeer(),
                 mode: .generic,
-                avatarInitiallyExpanded: true,
+                avatarInitiallyExpanded: peer.smallProfileImage != nil,
                 fromChat: false,
                 requestsContext: nil
             ) {
@@ -2401,14 +2620,124 @@ public final class SharedAccountContextImpl: SharedAccountContext {
             controller.push(birthdayController)
         }
         
+        presentExportAlertImpl = { [weak controller] in
+            guard let controller, case let .starGiftTransfer(_, reference, gift, _, canExportDate, _) = source, let canExportDate else {
+                return
+            }
+            let currentTime = Int32(CFAbsoluteTimeGetCurrent() + kCFAbsoluteTimeIntervalSince1970)
+            if currentTime > canExportDate {
+                let alertController = giftWithdrawAlertController(context: context, gift: gift, commit: {
+                    let _ = (context.engine.payments.checkStarGiftWithdrawalAvailability(reference: reference)
+                    |> deliverOnMainQueue).start(error: { [weak controller] error in
+                        switch error {
+                        case .serverProvided:
+                            return
+                        case .requestPassword:
+                            let alertController = confirmGiftWithdrawalController(context: context, reference: reference, present: { [weak controller] c, a in
+                                controller?.present(c, in: .window(.root))
+                            }, completion: { [weak controller] url in
+                                let presentationData = context.sharedContext.currentPresentationData.with { $0 }
+                                context.sharedContext.openExternalUrl(context: context, urlContext: .generic, url: url, forceExternal: true, presentationData: presentationData, navigationController: nil, dismissInput: {})
+                                
+                                guard let controller, let navigationController = controller.navigationController as? NavigationController else {
+                                    return
+                                }
+                                var controllers = navigationController.viewControllers
+                                controllers = controllers.filter { !($0 is ContactSelectionController) }
+                                navigationController.setViewControllers(controllers, animated: true)
+                            })
+                            controller?.present(alertController, in: .window(.root))
+                        default:
+                            let alertController = giftWithdrawalController(context: context, reference: reference, initialError: error, present: { [weak controller] c, a in
+                                controller?.present(c, in: .window(.root))
+                            }, completion: { _ in
+                                
+                            })
+                            controller?.present(alertController, in: .window(.root))
+                        }
+                    })
+                })
+                controller.present(alertController, in: .window(.root))
+            } else {
+                let delta = canExportDate - currentTime
+                let days: Int32 = Int32(ceil(Float(delta) / 86400.0))
+                let daysString = presentationData.strings.Gift_Transfer_UnlockPending_Text_Days(days)
+                let title = presentationData.strings.Gift_Transfer_UnlockPending_Title
+                let text = presentationData.strings.Gift_Transfer_UnlockPending_Text(daysString).string
+                let alertController = textAlertController(context: context, title: title, text: text, actions: [
+                    TextAlertAction(type: .defaultAction, title: presentationData.strings.Common_OK, action: {})
+                ])
+                controller.present(alertController, in: .window(.root))
+            }
+        }
+        
+        presentTransferAlertImpl = { [weak controller] peer in
+            guard let controller, case let .starGiftTransfer(_, _, gift, transferStars, _, _) = source else {
+                return
+            }
+            let alertController = giftTransferAlertController(context: context, gift: gift, peer: peer, transferStars: transferStars, commit: { [weak controller] in
+                completion?([peer.id])
+                
+                guard let controller, let navigationController = controller.navigationController as? NavigationController else {
+                    return
+                }
+                var controllers = navigationController.viewControllers
+                controllers = controllers.filter { !($0 is ContactSelectionController) }
+                
+                if !isChannelGift {
+                    if peer.id.namespace == Namespaces.Peer.CloudChannel {
+                        if let controller = context.sharedContext.makePeerInfoController(
+                            context: context,
+                            updatedPresentationData: nil,
+                            peer: peer._asPeer(),
+                            mode: .gifts,
+                            avatarInitiallyExpanded: false,
+                            fromChat: false,
+                            requestsContext: nil
+                        ) {
+                            controllers.append(controller)
+                        }
+                    } else {
+                        var foundController = false
+                        for controller in controllers.reversed() {
+                            if let chatController = controller as? ChatController, case .peer(id: peer.id) = chatController.chatLocation {
+                                chatController.hintPlayNextOutgoingGift()
+                                foundController = true
+                                break
+                            }
+                        }
+                        if !foundController {
+                            let chatController = context.sharedContext.makeChatController(context: context, chatLocation: .peer(id: peer.id), subject: nil, botStart: nil, mode: .standard(.default), params: nil)
+                            chatController.hintPlayNextOutgoingGift()
+                            controllers.append(chatController)
+                        }
+                    }
+                }
+                navigationController.setViewControllers(controllers, animated: true)
+                
+                Queue.mainQueue().after(0.3) {
+                    let tooltipController = UndoOverlayController(
+                        presentationData: presentationData,
+                        content: .forward(savedMessages: false, text: presentationData.strings.Gift_Transfer_Success("\(gift.title) #\(gift.number)", peer.displayTitle(strings: presentationData.strings, displayOrder: presentationData.nameDisplayOrder)).string),
+                        elevatedLayout: false,
+                        action: { _ in return true }
+                    )
+                    if let lastController = controllers.last as? ViewController {
+                        lastController.present(tooltipController, in: .window(.root))
+                    }
+                }
+            })
+            controller.present(alertController, in: .window(.root))
+        }
+        
         return controller
     }
     
-    public func makeGiftOptionsController(context: AccountContext, peerId: EnginePeer.Id, premiumOptions: [CachedPremiumGiftOption]) -> ViewController {
+    public func makeGiftOptionsController(context: AccountContext, peerId: EnginePeer.Id, premiumOptions: [CachedPremiumGiftOption], hasBirthday: Bool, completion: (() -> Void)?) -> ViewController {
         guard let starsContext = context.starsContext else {
             fatalError()
         }
-        let controller = GiftOptionsScreen(context: context, starsContext: starsContext, peerId: peerId, premiumOptions: premiumOptions)
+        let controller = GiftOptionsScreen(context: context, starsContext: starsContext, peerId: peerId, premiumOptions: premiumOptions, hasBirthday: hasBirthday, completion: completion)
         controller.navigationPresentation = .modal
         return controller
     }
@@ -2429,6 +2758,7 @@ public final class SharedAccountContextImpl: SharedAccountContext {
         var actionImpl: (() -> Void)?
         var openPremiumIntroImpl: (() -> Void)?
         
+        let presentationData = context.sharedContext.currentPresentationData.with { $0 }
         let controller = PremiumPrivacyScreen(
             context: context,
             peerId: peerId,
@@ -2447,7 +2777,6 @@ public final class SharedAccountContextImpl: SharedAccountContext {
             let currentPrivacy = Promise<AccountPrivacySettings>()
             currentPrivacy.set(context.engine.privacy.requestAccountPrivacySettings())
             
-            let presentationData = context.sharedContext.currentPresentationData.with { $0 }
             let tooltipText: String
             
             switch subject {
@@ -2460,7 +2789,7 @@ public final class SharedAccountContextImpl: SharedAccountContext {
                     let presence = current.presence
                     var disabledFor: [PeerId: SelectivePrivacyPeer] = [:]
                     switch presence {
-                    case let .enableEveryone(disabledForValue), let .enableContacts(_, disabledForValue, _):
+                    case let .enableEveryone(disabledForValue), let .enableContacts(_, disabledForValue, _, _):
                         disabledFor = disabledForValue
                     default:
                         break
@@ -2504,7 +2833,7 @@ public final class SharedAccountContextImpl: SharedAccountContext {
             let controller = context.sharedContext.makePremiumIntroController(context: context, source: introSource, forceDark: false, dismissed: nil)
             parentController.push(controller)
         }
-        
+                
         return controller
     }
     
@@ -2546,8 +2875,8 @@ public final class SharedAccountContextImpl: SharedAccountContext {
         return controller
     }
     
-    public func makeStickerPackScreen(context: AccountContext, updatedPresentationData: (initial: PresentationData, signal: Signal<PresentationData, NoError>)?, mainStickerPack: StickerPackReference, stickerPacks: [StickerPackReference], loadedStickerPacks: [LoadedStickerPack], isEditing: Bool, expandIfNeeded: Bool, parentNavigationController: NavigationController?, sendSticker: ((FileMediaReference, UIView, CGRect) -> Bool)?, actionPerformed: ((Bool) -> Void)?) -> ViewController {
-        return StickerPackScreen(context: context, updatedPresentationData: updatedPresentationData, mainStickerPack: mainStickerPack, stickerPacks: stickerPacks, loadedStickerPacks: loadedStickerPacks, isEditing: isEditing, expandIfNeeded: expandIfNeeded, parentNavigationController: parentNavigationController, sendSticker: sendSticker, actionPerformed: { actions in
+    public func makeStickerPackScreen(context: AccountContext, updatedPresentationData: (initial: PresentationData, signal: Signal<PresentationData, NoError>)?, mainStickerPack: StickerPackReference, stickerPacks: [StickerPackReference], loadedStickerPacks: [LoadedStickerPack], actionTitle: String?, isEditing: Bool, expandIfNeeded: Bool, parentNavigationController: NavigationController?, sendSticker: ((FileMediaReference, UIView, CGRect) -> Bool)?, actionPerformed: ((Bool) -> Void)?) -> ViewController {
+        return StickerPackScreen(context: context, updatedPresentationData: updatedPresentationData, mainStickerPack: mainStickerPack, stickerPacks: stickerPacks, loadedStickerPacks: loadedStickerPacks, actionTitle: actionTitle, isEditing: isEditing, expandIfNeeded: expandIfNeeded, parentNavigationController: parentNavigationController, sendSticker: sendSticker, actionPerformed: { actions in
             if let (_, _, action) = actions.first {
                 switch action {
                 case .add:
@@ -2560,21 +2889,21 @@ public final class SharedAccountContextImpl: SharedAccountContext {
     }
     
     public func makeBotPreviewEditorScreen(context: AccountContext, source: Any?, target: Stories.PendingTarget, transitionArguments: (UIView, CGRect, UIImage?)?, transitionOut: @escaping () -> BotPreviewEditorTransitionOut?, externalState: MediaEditorTransitionOutExternalState, completion: @escaping (MediaEditorScreenResult, @escaping (@escaping () -> Void) -> Void) -> Void, cancelled: @escaping () -> Void) -> ViewController {
-        let subject: Signal<MediaEditorScreen.Subject?, NoError>
+        let subject: Signal<MediaEditorScreenImpl.Subject?, NoError>
         if let asset = source as? PHAsset {
             subject = .single(.asset(asset))
         } else if let image = source as? UIImage {
-            subject = .single(.image(image, PixelDimensions(image.size), nil, .bottomRight))
+            subject = .single(.image(image: image, dimensions: PixelDimensions(image.size), additionalImage: nil, additionalImagePosition: .bottomRight))
         } else {
             subject = .single(.empty(PixelDimensions(width: 1080, height: 1920)))
         }
-        let editorController = MediaEditorScreen(
+        let editorController = MediaEditorScreenImpl(
             context: context,
             mode: .botPreview,
             subject: subject,
             customTarget: nil,
             transitionIn: transitionArguments.flatMap { .gallery(
-                MediaEditorScreen.TransitionIn.GalleryTransitionIn(
+                MediaEditorScreenImpl.TransitionIn.GalleryTransitionIn(
                     sourceView: $0.0,
                     sourceRect: $0.1,
                     sourceImage: $0.2
@@ -2582,13 +2911,13 @@ public final class SharedAccountContextImpl: SharedAccountContext {
             ) },
             transitionOut: { finished, isNew in
                 if !finished, let transitionArguments {
-                    return MediaEditorScreen.TransitionOut(
+                    return MediaEditorScreenImpl.TransitionOut(
                         destinationView: transitionArguments.0,
                         destinationRect: transitionArguments.0.bounds,
                         destinationCornerRadius: 0.0
                     )
                 } else if finished, let transitionOut = transitionOut(), let destinationView = transitionOut.destinationView {
-                    return MediaEditorScreen.TransitionOut(
+                    return MediaEditorScreenImpl.TransitionOut(
                         destinationView: destinationView,
                         destinationRect: transitionOut.destinationRect,
                         destinationCornerRadius: transitionOut.destinationCornerRadius,
@@ -2598,7 +2927,7 @@ public final class SharedAccountContextImpl: SharedAccountContext {
                 return nil
             }, completion: { result, commit in
                 completion(result, commit)
-            } as (MediaEditorScreen.Result, @escaping (@escaping () -> Void) -> Void) -> Void
+            } as (MediaEditorScreenImpl.Result, @escaping (@escaping () -> Void) -> Void) -> Void
         )
         editorController.cancelled = { _ in
             cancelled()
@@ -2607,8 +2936,8 @@ public final class SharedAccountContextImpl: SharedAccountContext {
     }
     
     public func makeStickerEditorScreen(context: AccountContext, source: Any?, intro: Bool, transitionArguments: (UIView, CGRect, UIImage?)?, completion: @escaping (TelegramMediaFile, [String], @escaping () -> Void) -> Void, cancelled: @escaping () -> Void) -> ViewController {
-        let subject: Signal<MediaEditorScreen.Subject?, NoError>
-        var mode: MediaEditorScreen.Mode.StickerEditorMode
+        let subject: Signal<MediaEditorScreenImpl.Subject?, NoError>
+        var mode: MediaEditorScreenImpl.Mode.StickerEditorMode
         var fromCamera = false
         if let (file, emoji) = source as? (TelegramMediaFile, [String]) {
             subject = .single(.sticker(file, emoji))
@@ -2617,16 +2946,16 @@ public final class SharedAccountContextImpl: SharedAccountContext {
             subject = .single(.asset(asset))
             mode = .addingToPack
         } else if let image = source as? UIImage {
-            subject = .single(.image(image, PixelDimensions(image.size), nil, .bottomRight))
+            subject = .single(.image(image: image, dimensions: PixelDimensions(image.size), additionalImage: nil, additionalImagePosition: .bottomRight))
             mode = .addingToPack
-        } else if let source = source as? Signal<CameraScreen.Result, NoError> {
+        } else if let source = source as? Signal<CameraScreenImpl.Result, NoError> {
             subject = source
-            |> map { value -> MediaEditorScreen.Subject? in
+            |> map { value -> MediaEditorScreenImpl.Subject? in
                 switch value {
                 case .pendingImage:
                     return nil
                 case let .image(image):
-                    return .image(image.image, PixelDimensions(image.image.size), nil, .topLeft)
+                    return .image(image: image.image, dimensions: PixelDimensions(image.image.size), additionalImage: nil, additionalImagePosition: .topLeft)
                 default:
                     return nil
                 }
@@ -2640,12 +2969,12 @@ public final class SharedAccountContextImpl: SharedAccountContext {
         if intro {
             mode = .businessIntro
         }
-        let editorController = MediaEditorScreen(
+        let editorController = MediaEditorScreenImpl(
             context: context,
             mode: .stickerEditor(mode: mode),
             subject: subject,
             transitionIn: fromCamera ? .camera : transitionArguments.flatMap { .gallery(
-                MediaEditorScreen.TransitionIn.GalleryTransitionIn(
+                MediaEditorScreenImpl.TransitionIn.GalleryTransitionIn(
                     sourceView: $0.0,
                     sourceRect: $0.1,
                     sourceImage: $0.2
@@ -2653,7 +2982,7 @@ public final class SharedAccountContextImpl: SharedAccountContext {
             ) },
             transitionOut: { finished, isNew in
                 if !finished, let transitionArguments {
-                    return MediaEditorScreen.TransitionOut(
+                    return MediaEditorScreenImpl.TransitionOut(
                         destinationView: transitionArguments.0,
                         destinationRect: transitionArguments.0.bounds,
                         destinationCornerRadius: 0.0
@@ -2666,7 +2995,7 @@ public final class SharedAccountContextImpl: SharedAccountContext {
                         commit({})
                     })
                 }
-            } as (MediaEditorScreen.Result, @escaping (@escaping () -> Void) -> Void) -> Void
+            } as (MediaEditorScreenImpl.Result, @escaping (@escaping () -> Void) -> Void) -> Void
         )
         editorController.cancelled = { _ in
             cancelled()
@@ -2675,15 +3004,15 @@ public final class SharedAccountContextImpl: SharedAccountContext {
     }
         
     public func makeStoryMediaEditorScreen(context: AccountContext, source: Any?, text: String?, link: (url: String, name: String?)?, completion: @escaping (MediaEditorScreenResult, @escaping (@escaping () -> Void) -> Void) -> Void) -> ViewController {
-        let subject: Signal<MediaEditorScreen.Subject?, NoError>
+        let subject: Signal<MediaEditorScreenImpl.Subject?, NoError>
         if let image = source as? UIImage {
-            subject = .single(.image(image, PixelDimensions(image.size), nil, .bottomRight))
+            subject = .single(.image(image: image, dimensions: PixelDimensions(image.size), additionalImage: nil, additionalImagePosition: .bottomRight))
         } else if let path = source as? String {
-            subject = .single(.video(path, nil, false, nil, nil, PixelDimensions(width: 1080, height: 1920), 0.0, [], .bottomRight))
+            subject = .single(.video(videoPath: path, thumbnail: nil, mirror: false, additionalVideoPath: nil, additionalThumbnail: nil, dimensions: PixelDimensions(width: 1080, height: 1920), duration: 0.0, videoPositionChanges: [], additionalVideoPosition: .bottomRight))
         } else {
             subject = .single(.empty(PixelDimensions(width: 1080, height: 1920)))
         }
-        let editorController = MediaEditorScreen(
+        let editorController = MediaEditorScreenImpl(
             context: context,
             mode: .storyEditor,
             subject: subject,
@@ -2695,7 +3024,7 @@ public final class SharedAccountContextImpl: SharedAccountContext {
                 return nil
             }, completion: { result, commit in
                 completion(result, commit)
-            } as (MediaEditorScreen.Result, @escaping (@escaping () -> Void) -> Void) -> Void
+            } as (MediaEditorScreenImpl.Result, @escaping (@escaping () -> Void) -> Void) -> Void
         )
 //        editorController.cancelled = { _ in
 //            cancelled()
@@ -2707,14 +3036,18 @@ public final class SharedAccountContextImpl: SharedAccountContext {
         return mediaPickerController(context: context, hasSearch: hasSearch, completion: completion)
     }
     
-    public func makeStoryMediaPickerScreen(context: AccountContext, isDark: Bool, getSourceRect: @escaping () -> CGRect, completion: @escaping (Any, UIView, CGRect, UIImage?, @escaping (Bool?) -> (UIView, CGRect)?, @escaping () -> Void) -> Void, dismissed: @escaping () -> Void, groupsPresented: @escaping () -> Void) -> ViewController {
-        return storyMediaPickerController(context: context, isDark: isDark, getSourceRect: getSourceRect, completion: completion, dismissed: dismissed, groupsPresented: groupsPresented)
+    public func makeStoryMediaPickerScreen(context: AccountContext, isDark: Bool, forCollage: Bool, selectionLimit: Int?, getSourceRect: @escaping () -> CGRect, completion: @escaping (Any, UIView, CGRect, UIImage?, @escaping (Bool?) -> (UIView, CGRect)?, @escaping () -> Void) -> Void, multipleCompletion: @escaping ([Any]) -> Void, dismissed: @escaping () -> Void, groupsPresented: @escaping () -> Void) -> ViewController {
+        return storyMediaPickerController(context: context, isDark: isDark, forCollage: forCollage, selectionLimit: selectionLimit, getSourceRect: getSourceRect, completion: completion, multipleCompletion: multipleCompletion, dismissed: dismissed, groupsPresented: groupsPresented)
     }
     
     public func makeStickerMediaPickerScreen(context: AccountContext, getSourceRect: @escaping () -> CGRect?, completion: @escaping (Any?, UIView?, CGRect, UIImage?, Bool, @escaping (Bool?) -> (UIView, CGRect)?, @escaping () -> Void) -> Void, dismissed: @escaping () -> Void) -> ViewController {
         return stickerMediaPickerController(context: context, getSourceRect: getSourceRect, completion: completion, dismissed: dismissed)
     }
     
+    public func makeAvatarMediaPickerScreen(context: AccountContext, getSourceRect: @escaping () -> CGRect?, canDelete: Bool, performDelete: @escaping () -> Void, completion: @escaping (Any?, UIView?, CGRect, UIImage?, Bool, @escaping (Bool?) -> (UIView, CGRect)?, @escaping () -> Void) -> Void, dismissed: @escaping () -> Void) -> ViewController {
+        return avatarMediaPickerController(context: context, getSourceRect: getSourceRect, canDelete: canDelete, performDelete: performDelete, completion: completion, dismissed: dismissed)
+    }
+
     public func makeStickerPickerScreen(context: AccountContext, inputData: Promise<StickerPickerInput>, completion: @escaping (FileMediaReference) -> Void) -> ViewController {
         let controller = StickerPickerScreen(context: context, inputData: inputData.get(), expanded: true, hasGifs: false, hasInteractiveStickers: false)
         controller.completion = { content in
@@ -2806,8 +3139,90 @@ public final class SharedAccountContextImpl: SharedAccountContext {
         return StarsIntroScreen(context: context)
     }
     
-    public func makeGiftViewScreen(context: AccountContext, message: EngineMessage) -> ViewController {
-        return GiftViewScreen(context: context, subject: .message(message))
+    public func makeGiftViewScreen(context: AccountContext, message: EngineMessage, shareStory: ((StarGift.UniqueGift) -> Void)?) -> ViewController {
+        return GiftViewScreen(context: context, subject: .message(message), shareStory: shareStory)
+    }
+    
+    public func makeGiftViewScreen(context: AccountContext, gift: StarGift.UniqueGift, shareStory: ((StarGift.UniqueGift) -> Void)?, dismissed: (() -> Void)?) -> ViewController {
+        let controller = GiftViewScreen(context: context, subject: .uniqueGift(gift), shareStory: shareStory)
+        controller.disposed = {
+            dismissed?()
+        }
+        return controller
+    }
+    
+    public func makeGiftWearPreviewScreen(context: AccountContext, gift: StarGift.UniqueGift) -> ViewController {
+        let controller = GiftViewScreen(context: context, subject: .wearPreview(gift))
+        return controller
+    }
+    
+    public func makeStorySharingScreen(context: AccountContext, subject: StorySharingSubject, parentController: ViewController) -> ViewController {
+        let editorSubject: Signal<MediaEditorScreenImpl.Subject?, NoError>
+        switch subject {
+        case let .messages(messages):
+            editorSubject = .single(.message(messages.map { $0.id }))
+        case let .gift(gift):
+            editorSubject = .single(.gift(gift))
+        }
+        
+        let externalState = MediaEditorTransitionOutExternalState(
+            storyTarget: nil,
+            isForcedTarget: false,
+            isPeerArchived: false,
+            transitionOut: nil
+        )
+        let presentationData = context.sharedContext.currentPresentationData.with { $0 }
+        let controller = MediaEditorScreenImpl(
+            context: context,
+            mode: .storyEditor,
+            subject: editorSubject,
+            transitionIn: nil,
+            transitionOut: { _, _ in
+                return nil
+            },
+            completion: { [weak parentController] result, commit in
+                let targetPeerId: EnginePeer.Id
+                let target: Stories.PendingTarget
+                if let sendAsPeerId = result.options.sendAsPeerId {
+                    target = .peer(sendAsPeerId)
+                    targetPeerId = sendAsPeerId
+                } else {
+                    target = .myStories
+                    targetPeerId = context.account.peerId
+                }
+                externalState.storyTarget = target
+                
+                if let rootController = context.sharedContext.mainWindow?.viewController as? TelegramRootControllerInterface {
+                    rootController.proceedWithStoryUpload(target: target, result: result, existingMedia: nil, forwardInfo: nil, externalState: externalState, commit: commit)
+                }
+                
+                let _ = (context.engine.data.get(TelegramEngine.EngineData.Item.Peer.Peer(id: targetPeerId))
+                |> deliverOnMainQueue).start(next: { peer in
+                    guard let peer else {
+                        return
+                    }
+                    let text: String
+                    if case .channel = peer {
+                        text = presentationData.strings.Story_MessageReposted_Channel(peer.compactDisplayTitle).string
+                    } else {
+                        text = presentationData.strings.Story_MessageReposted_Personal
+                    }
+                    Queue.mainQueue().after(0.25) {
+                        parentController?.present(UndoOverlayController(
+                            presentationData: presentationData,
+                            content: .forward(savedMessages: false, text: text),
+                            elevatedLayout: false,
+                            action: { _ in return false }
+                        ), in: .current)
+                        
+                        Queue.mainQueue().after(0.1) {
+                            HapticFeedback().success()
+                        }
+                    }
+                })
+            }
+        )
+        return controller
     }
     
     public func makeContentReportScreen(context: AccountContext, subject: ReportContentSubject, forceDark: Bool, present: @escaping (ViewController) -> Void, completion: @escaping () -> Void, requestSelectMessages: ((String, Data, String?) -> Void)?) {
@@ -2819,6 +3234,14 @@ public final class SharedAccountContextImpl: SharedAccountContext {
         })
     }
     
+    public func makeShareController(context: AccountContext, subject: ShareControllerSubject, forceExternal: Bool, shareStory: (() -> Void)?, enqueued: (([PeerId], [Int64]) -> Void)?, actionCompleted: (() -> Void)?) -> ViewController {
+        let controller = ShareController(context: context, subject: subject, externalShare: forceExternal)
+        controller.shareStory = shareStory
+        controller.enqueued = enqueued
+        controller.actionCompleted = actionCompleted
+        return controller
+    }
+    
     public func makeMiniAppListScreenInitialData(context: AccountContext) -> Signal<MiniAppListScreenInitialData, NoError> {
         return MiniAppListScreen.initialData(context: context)
     }
@@ -2827,8 +3250,29 @@ public final class SharedAccountContextImpl: SharedAccountContext {
         return MiniAppListScreen(context: context, initialData: initialData as! MiniAppListScreen.InitialData)
     }
     
-    public func openWebApp(context: AccountContext, parentController: ViewController, updatedPresentationData: (initial: PresentationData, signal: Signal<PresentationData, NoError>)?, peer: EnginePeer, threadId: Int64?, buttonText: String, url: String, simple: Bool, source: ChatOpenWebViewSource, skipTermsOfService: Bool) {
-        openWebAppImpl(context: context, parentController: parentController, updatedPresentationData: updatedPresentationData, peer: peer, threadId: threadId, buttonText: buttonText, url: url, simple: simple, source: source, skipTermsOfService: skipTermsOfService)
+    public func openWebApp(context: AccountContext, parentController: ViewController, updatedPresentationData: (initial: PresentationData, signal: Signal<PresentationData, NoError>)?, botPeer: EnginePeer, chatPeer: EnginePeer?, threadId: Int64?, buttonText: String, url: String, simple: Bool, source: ChatOpenWebViewSource, skipTermsOfService: Bool, payload: String?) {
+        openWebAppImpl(context: context, parentController: parentController, updatedPresentationData: updatedPresentationData, botPeer: botPeer, chatPeer: chatPeer, threadId: threadId, buttonText: buttonText, url: url, simple: simple, source: source, skipTermsOfService: skipTermsOfService, payload: payload)
+    }
+    
+    public func makeAffiliateProgramSetupScreenInitialData(context: AccountContext, peerId: EnginePeer.Id, mode: AffiliateProgramSetupScreenMode) -> Signal<AffiliateProgramSetupScreenInitialData, NoError> {
+        return AffiliateProgramSetupScreen.content(context: context, peerId: peerId, mode: mode)
+    }
+    
+    public func makeAffiliateProgramSetupScreen(context: AccountContext, initialData: AffiliateProgramSetupScreenInitialData) -> ViewController {
+        return AffiliateProgramSetupScreen(context: context, initialContent: initialData)
+    }
+    
+    public func makeAffiliateProgramJoinScreen(context: AccountContext, sourcePeer: EnginePeer, commissionPermille: Int32, programDuration: Int32?, revenuePerUser: Double, mode: JoinAffiliateProgramScreenMode) -> ViewController {
+        return JoinAffiliateProgramScreen(context: context, sourcePeer: sourcePeer, commissionPermille: commissionPermille, programDuration: programDuration, revenuePerUser: revenuePerUser, mode: mode)
+    }
+    
+    public func makeGalleryController(context: AccountContext, source: GalleryControllerItemSource, streamSingleVideo: Bool, isPreview: Bool) -> ViewController {
+        let controller = GalleryController(context: context, source: source, streamSingleVideo: streamSingleVideo, replaceRootController: { _, _ in
+        }, baseNavigationController: nil)
+        if isPreview {
+            controller.setHintWillBePresentedInPreviewingContext(true)
+        }
+        return controller
     }
 }
 
@@ -2838,15 +3282,18 @@ private func peerInfoControllerImpl(context: AccountContext, updatedPresentation
     } else if let _ = peer as? TelegramChannel {
         var forumTopicThread: ChatReplyThreadMessage?
         var switchToRecommendedChannels = false
+        var switchToGifts = false
         switch mode {
         case let .forumTopic(thread):
             forumTopicThread = thread
         case .recommendedChannels:
             switchToRecommendedChannels = true
+        case .gifts:
+            switchToGifts = true
         default:
             break
         }
-        return PeerInfoScreenImpl(context: context, updatedPresentationData: updatedPresentationData, peerId: peer.id, avatarInitiallyExpanded: avatarInitiallyExpanded, isOpenedFromChat: isOpenedFromChat, nearbyPeerDistance: nil, reactionSourceMessageId: nil, callMessages: [], forumTopicThread: forumTopicThread, switchToRecommendedChannels: switchToRecommendedChannels)
+        return PeerInfoScreenImpl(context: context, updatedPresentationData: updatedPresentationData, peerId: peer.id, avatarInitiallyExpanded: avatarInitiallyExpanded, isOpenedFromChat: isOpenedFromChat, nearbyPeerDistance: nil, reactionSourceMessageId: nil, callMessages: [], forumTopicThread: forumTopicThread, switchToRecommendedChannels: switchToRecommendedChannels, switchToGifts: switchToGifts)
     } else if peer is TelegramUser {
         var nearbyPeerDistance: Int32?
         var reactionSourceMessageId: MessageId?
@@ -2871,6 +3318,8 @@ private func peerInfoControllerImpl(context: AccountContext, updatedPresentation
             forumTopicThread = thread
         case .myProfile:
             isMyProfile = true
+        case .gifts:
+            switchToGifts = true
         case .myProfileGifts:
             isMyProfile = true
             switchToGifts = true
@@ -2882,4 +3331,11 @@ private func peerInfoControllerImpl(context: AccountContext, updatedPresentation
         return PeerInfoScreenImpl(context: context, updatedPresentationData: updatedPresentationData, peerId: peer.id, avatarInitiallyExpanded: avatarInitiallyExpanded, isOpenedFromChat: isOpenedFromChat, nearbyPeerDistance: nil, reactionSourceMessageId: nil, callMessages: [])
     }
     return nil
+}
+
+private func useFlatModalCallsPresentation(context: AccountContext) -> Bool {
+    if let data = context.currentAppConfiguration.with({ $0 }).data, data["ios_killswitch_modalcalls"] != nil {
+        return false
+    }
+    return true
 }

@@ -883,7 +883,11 @@ private final class SparseItemGridBindingImpl: SparseItemGridBinding, ListShimme
                         selectedMedia = image
                         break
                     } else if let file = media as? TelegramMediaFile {
-                        selectedMedia = file
+                        if let cover = file.videoCover {
+                            selectedMedia = cover
+                        } else {
+                            selectedMedia = file
+                        }
                         break
                     }
                 }
@@ -1200,7 +1204,7 @@ public final class PeerInfoVisualMediaPaneNode: ASDisplayNode, PeerInfoPaneNode,
                 chatControllerInteraction.toggleMessagesSelection(messageId, selected)
             },
             openUrl: { url, concealed, external, message in
-                chatControllerInteraction.openUrl(ChatControllerInteraction.OpenUrl(url: url, concealed: concealed, external: external, message: message))
+                chatControllerInteraction.openUrl(ChatControllerInteraction.OpenUrl(url: url, concealed: concealed, external: external, message: message, progress: Promise()))
             },
             openInstantPage: { message, data in
                 chatControllerInteraction.openInstantPage(message, data)

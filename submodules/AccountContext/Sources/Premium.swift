@@ -50,6 +50,7 @@ public enum PremiumGiftSource: Equatable {
     case settings([EnginePeer.Id: TelegramBirthday]?)
     case chatList([EnginePeer.Id: TelegramBirthday]?)
     case stars([EnginePeer.Id: TelegramBirthday]?)
+    case starGiftTransfer([EnginePeer.Id: TelegramBirthday]?, StarGiftReference, StarGift.UniqueGift, Int64, Int32?, Bool)
     case channelBoost
     case deeplink(String?)
 }
@@ -120,6 +121,7 @@ public enum BoostSubject: Equatable {
     case audioTranscription
     case emojiPack
     case noAds
+    case wearGift
 }
 
 public enum StarsPurchasePurpose: Equatable {
@@ -131,6 +133,7 @@ public enum StarsPurchasePurpose: Equatable {
     case gift(peerId: EnginePeer.Id)
     case unlockMedia(requiredStars: Int64)
     case starGift(peerId: EnginePeer.Id, requiredStars: Int64)
+    case upgradeStarGift(requiredStars: Int64)
 }
 
 public struct PremiumConfiguration {
@@ -143,6 +146,7 @@ public struct PremiumConfiguration {
             showPremiumGiftInTextField: false,
             giveawayGiftsPurchaseAvailable: false,
             starsGiftsPurchaseAvailable: false,
+            starGiftsPurchaseBlocked: true,
             boostsPerGiftCount: 3,
             audioTransciptionTrialMaxDuration: 300,
             audioTransciptionTrialCount: 2,
@@ -154,6 +158,7 @@ public struct PremiumConfiguration {
             minChannelWallpaperLevel: 9,
             minChannelCustomWallpaperLevel: 10,
             minChannelRestrictAdsLevel: 50,
+            minChannelWearGiftLevel: 8,
             minGroupProfileIconLevel: 7,
             minGroupEmojiStatusLevel: 8,
             minGroupWallpaperLevel: 9,
@@ -170,6 +175,7 @@ public struct PremiumConfiguration {
     public let showPremiumGiftInTextField: Bool
     public let giveawayGiftsPurchaseAvailable: Bool
     public let starsGiftsPurchaseAvailable: Bool
+    public let starGiftsPurchaseBlocked: Bool
     public let boostsPerGiftCount: Int32
     public let audioTransciptionTrialMaxDuration: Int32
     public let audioTransciptionTrialCount: Int32
@@ -181,6 +187,7 @@ public struct PremiumConfiguration {
     public let minChannelWallpaperLevel: Int32
     public let minChannelCustomWallpaperLevel: Int32
     public let minChannelRestrictAdsLevel: Int32
+    public let minChannelWearGiftLevel: Int32
     public let minGroupProfileIconLevel: Int32
     public let minGroupEmojiStatusLevel: Int32
     public let minGroupWallpaperLevel: Int32
@@ -196,6 +203,7 @@ public struct PremiumConfiguration {
         showPremiumGiftInTextField: Bool,
         giveawayGiftsPurchaseAvailable: Bool,
         starsGiftsPurchaseAvailable: Bool,
+        starGiftsPurchaseBlocked: Bool,
         boostsPerGiftCount: Int32,
         audioTransciptionTrialMaxDuration: Int32,
         audioTransciptionTrialCount: Int32,
@@ -207,6 +215,7 @@ public struct PremiumConfiguration {
         minChannelWallpaperLevel: Int32,
         minChannelCustomWallpaperLevel: Int32,
         minChannelRestrictAdsLevel: Int32,
+        minChannelWearGiftLevel: Int32,
         minGroupProfileIconLevel: Int32,
         minGroupEmojiStatusLevel: Int32,
         minGroupWallpaperLevel: Int32,
@@ -221,6 +230,7 @@ public struct PremiumConfiguration {
         self.showPremiumGiftInTextField = showPremiumGiftInTextField
         self.giveawayGiftsPurchaseAvailable = giveawayGiftsPurchaseAvailable
         self.starsGiftsPurchaseAvailable = starsGiftsPurchaseAvailable
+        self.starGiftsPurchaseBlocked = starGiftsPurchaseBlocked
         self.boostsPerGiftCount = boostsPerGiftCount
         self.audioTransciptionTrialMaxDuration = audioTransciptionTrialMaxDuration
         self.audioTransciptionTrialCount = audioTransciptionTrialCount
@@ -232,6 +242,7 @@ public struct PremiumConfiguration {
         self.minChannelWallpaperLevel = minChannelWallpaperLevel
         self.minChannelCustomWallpaperLevel = minChannelCustomWallpaperLevel
         self.minChannelRestrictAdsLevel = minChannelRestrictAdsLevel
+        self.minChannelWearGiftLevel = minChannelWearGiftLevel
         self.minGroupProfileIconLevel = minGroupProfileIconLevel
         self.minGroupEmojiStatusLevel = minGroupEmojiStatusLevel
         self.minGroupWallpaperLevel = minGroupWallpaperLevel
@@ -254,6 +265,7 @@ public struct PremiumConfiguration {
                 showPremiumGiftInTextField: data["premium_gift_text_field_icon"] as? Bool ?? defaultValue.showPremiumGiftInTextField,
                 giveawayGiftsPurchaseAvailable: data["giveaway_gifts_purchase_available"] as? Bool ?? defaultValue.giveawayGiftsPurchaseAvailable,
                 starsGiftsPurchaseAvailable: data["stars_gifts_enabled"] as? Bool ?? defaultValue.starsGiftsPurchaseAvailable,
+                starGiftsPurchaseBlocked: data["stargifts_blocked"] as? Bool ?? defaultValue.starGiftsPurchaseBlocked,
                 boostsPerGiftCount: get(data["boosts_per_sent_gift"]) ?? defaultValue.boostsPerGiftCount,
                 audioTransciptionTrialMaxDuration: get(data["transcribe_audio_trial_duration_max"]) ?? defaultValue.audioTransciptionTrialMaxDuration,
                 audioTransciptionTrialCount: get(data["transcribe_audio_trial_weekly_number"]) ?? defaultValue.audioTransciptionTrialCount,
@@ -265,6 +277,7 @@ public struct PremiumConfiguration {
                 minChannelWallpaperLevel: get(data["channel_wallpaper_level_min"]) ?? defaultValue.minChannelWallpaperLevel,
                 minChannelCustomWallpaperLevel: get(data["channel_custom_wallpaper_level_min"]) ?? defaultValue.minChannelCustomWallpaperLevel,
                 minChannelRestrictAdsLevel: get(data["channel_restrict_sponsored_level_min"]) ?? defaultValue.minChannelRestrictAdsLevel,
+                minChannelWearGiftLevel: get(data["channel_emoji_status_level_min"]) ?? defaultValue.minChannelWearGiftLevel,
                 minGroupProfileIconLevel: get(data["group_profile_bg_icon_level_min"]) ?? defaultValue.minGroupProfileIconLevel,
                 minGroupEmojiStatusLevel: get(data["group_emoji_status_level_min"]) ?? defaultValue.minGroupEmojiStatusLevel,
                 minGroupWallpaperLevel: get(data["group_wallpaper_level_min"]) ?? defaultValue.minGroupWallpaperLevel,

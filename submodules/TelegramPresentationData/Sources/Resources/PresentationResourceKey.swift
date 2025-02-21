@@ -119,6 +119,8 @@ public enum PresentationResourceKey: Int32 {
     
     case chatListForwardedIcon
     case chatListStoryReplyIcon
+    case chatListGiftIcon
+    case chatListLocationIcon
     
     case chatListGeneralTopicIcon
     case chatListGeneralTopicSmallIcon
@@ -302,6 +304,7 @@ public enum PresentationResourceKey: Int32 {
     
     case storyViewListLikeIcon
     case navigationPostStoryIcon
+    case navigationSortIcon
     
     case chatReplyBackgroundTemplateIncomingImage
     case chatReplyBackgroundTemplateOutgoingDashedImage

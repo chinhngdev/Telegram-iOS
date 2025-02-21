@@ -1536,7 +1536,7 @@ static CGPoint TGCameraControllerClampPointToScreenSize(__unused id self, __unus
         }];
         
         bool hasCamera = !self.inhibitMultipleCapture && (((_intent == TGCameraControllerGenericIntent || _intent == TGCameraControllerGenericPhotoOnlyIntent || _intent == TGCameraControllerGenericVideoOnlyIntent) && !_shortcut) || (_intent == TGCameraControllerPassportMultipleIntent));
-        TGMediaPickerGalleryModel *model = [[TGMediaPickerGalleryModel alloc] initWithContext:windowContext items:galleryItems focusItem:focusItem selectionContext:_items.count > 1 ? selectionContext : nil editingContext:editingContext hasCaptions:self.allowCaptions allowCaptionEntities:self.allowCaptionEntities hasTimer:self.hasTimer onlyCrop:_intent == TGCameraControllerPassportIntent || _intent == TGCameraControllerPassportIdIntent || _intent == TGCameraControllerPassportMultipleIntent inhibitDocumentCaptions:self.inhibitDocumentCaptions hasSelectionPanel:true hasCamera:hasCamera recipientName:self.recipientName isScheduledMessages:false];
+        TGMediaPickerGalleryModel *model = [[TGMediaPickerGalleryModel alloc] initWithContext:windowContext items:galleryItems focusItem:focusItem selectionContext:_items.count > 1 ? selectionContext : nil editingContext:editingContext hasCaptions:self.allowCaptions allowCaptionEntities:self.allowCaptionEntities hasTimer:self.hasTimer onlyCrop:_intent == TGCameraControllerPassportIntent || _intent == TGCameraControllerPassportIdIntent || _intent == TGCameraControllerPassportMultipleIntent inhibitDocumentCaptions:self.inhibitDocumentCaptions hasSelectionPanel:true hasCamera:hasCamera recipientName:self.recipientName isScheduledMessages:false hasCoverButton:false];
         model.inhibitMute = self.inhibitMute;
         model.controller = galleryController;
         model.stickersContext = self.stickersContext;
@@ -2743,9 +2743,15 @@ static CGPoint TGCameraControllerClampPointToScreenSize(__unused id self, __unus
         {
             case PGCameraModeVideo:
             {
-                if (widescreenWidth == 926.0f)
+                if (widescreenWidth == 956.0f)
+                    return CGRectMake(0, 82, screenSize.width, screenSize.height - 82 - 83);
+                else if (widescreenWidth == 932.0f)
+                    return CGRectMake(0, 82, screenSize.width, screenSize.height - 82 - 83);
+                else if (widescreenWidth == 926.0f)
                     return CGRectMake(0, 82, screenSize.width, screenSize.height - 82 - 83);
                 else if (widescreenWidth == 896.0f)
+                    return CGRectMake(0, 77, screenSize.width, screenSize.height - 77 - 83);
+                else if (widescreenWidth == 874.0f)
                     return CGRectMake(0, 77, screenSize.width, screenSize.height - 77 - 83);
                 else if (widescreenWidth == 812.0f)
                     return CGRectMake(0, 77, screenSize.width, screenSize.height - 77 - 68);
@@ -2770,13 +2776,17 @@ static CGPoint TGCameraControllerClampPointToScreenSize(__unused id self, __unus
             
             default:
             {
-                if (widescreenWidth == 932.0f)
+                if (widescreenWidth == 956.0f)
+                    return CGRectMake(0, 136, screenSize.width, screenSize.height - 136 - 234);
+                else if (widescreenWidth == 932.0f)
                     return CGRectMake(0, 136, screenSize.width, screenSize.height - 136 - 223);
                 else if (widescreenWidth == 926.0f)
                     return CGRectMake(0, 121, screenSize.width, screenSize.height - 121 - 234);
                 else if (widescreenWidth == 896.0f)
                     return CGRectMake(0, 121, screenSize.width, screenSize.height - 121 - 223);
-                if (widescreenWidth == 852.0f)
+                else if (widescreenWidth == 874.0f)
+                    return CGRectMake(0, 136, screenSize.width, screenSize.height - 136 - 202);
+                else if (widescreenWidth == 852.0f)
                     return CGRectMake(0, 136, screenSize.width, screenSize.height - 136 - 192);
                 else if (widescreenWidth == 844.0f)
                     return CGRectMake(0, 77, screenSize.width, screenSize.height - 77 - 191);

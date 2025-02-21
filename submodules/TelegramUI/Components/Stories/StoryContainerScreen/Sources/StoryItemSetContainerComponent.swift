@@ -1908,6 +1908,10 @@ public final class StoryItemSetContainerComponent: Component {
             }
         }
         
+        func inFocusUpdated(isInFocus: Bool) {
+            self.updateIsProgressPaused()
+        }
+        
         func activateInput() -> Bool {
             guard let component = self.component else {
                 return false
@@ -2864,7 +2868,7 @@ public final class StoryItemSetContainerComponent: Component {
                         style: .story,
                         placeholder: inputPlaceholder,
                         maxLength: 4096,
-                        queryTypes: [.mention, .emoji],
+                        queryTypes: [.mention, .hashtag, .emoji],
                         alwaysDarkWhenHasText: component.metrics.widthClass == .regular,
                         resetInputContents: resetInputContents,
                         nextInputMode: { [weak self] hasText in
@@ -2937,6 +2941,7 @@ public final class StoryItemSetContainerComponent: Component {
                             }
                             self.sendMessageContext.presentAttachmentMenu(view: self, subject: .default)
                         },
+                        attachmentButtonMode: component.slice.effectivePeer.isService ? nil : .attach,
                         myReaction: component.slice.item.storyItem.myReaction.flatMap { value -> MessageInputPanelComponent.MyReaction? in
                             var centerAnimation: TelegramMediaFile?
                             var animationFileId: Int64?
@@ -3007,6 +3012,7 @@ public final class StoryItemSetContainerComponent: Component {
                             }
                             self.performMoreAction(sourceView: sourceView, gesture: gesture)
                         },
+                        presentCaptionPositionTooltip: nil,
                         presentVoiceMessagesUnavailableTooltip: { [weak self] view in
                             guard let self, let component = self.component, self.voiceMessagesRestrictedTooltipController == nil else {
                                 return
@@ -3429,7 +3435,7 @@ public final class StoryItemSetContainerComponent: Component {
                                                 elevatedLayout: false,
                                                 position: .top,
                                                 animateInAsReplacement: false,
-                                                blurred: true,
+                                                appearance: UndoOverlayController.Appearance(isBlurred: true),
                                                 action: { _ in return false }
                                             ), nil)
                                         })))
@@ -3450,7 +3456,7 @@ public final class StoryItemSetContainerComponent: Component {
                                                 elevatedLayout: false,
                                                 position: .top,
                                                 animateInAsReplacement: false,
-                                                blurred: true,
+                                                appearance: UndoOverlayController.Appearance(isBlurred: true),
                                                 action: { _ in return false }
                                             ), nil)
                                         })))
@@ -3486,7 +3492,7 @@ public final class StoryItemSetContainerComponent: Component {
                                                 elevatedLayout: false,
                                                 position: .top,
                                                 animateInAsReplacement: false,
-                                                blurred: true,
+                                                appearance: UndoOverlayController.Appearance(isBlurred: true),
                                                 action: { [weak self] action in
                                                     guard let self, let component = self.component else {
                                                         return false
@@ -3533,7 +3539,7 @@ public final class StoryItemSetContainerComponent: Component {
                                                     elevatedLayout: false,
                                                     position: .top,
                                                     animateInAsReplacement: false,
-                                                    blurred: true,
+                                                    appearance: UndoOverlayController.Appearance(isBlurred: true),
                                                     action: { [weak self] action in
                                                         guard let self, let component = self.component else {
                                                             return false
@@ -4286,7 +4292,7 @@ public final class StoryItemSetContainerComponent: Component {
                                 storeAttributedTextInPasteboard(text)
                                 
                                 let presentationData = component.context.sharedContext.currentPresentationData.with { $0 }
-                                let undoController = UndoOverlayController(presentationData: presentationData, content: .copy(text: presentationData.strings.Conversation_TextCopied), elevatedLayout: false, animateInAsReplacement: false, blurred: true, action: { _ in true })
+                                let undoController = UndoOverlayController(presentationData: presentationData, content: .copy(text: presentationData.strings.Conversation_TextCopied), elevatedLayout: false, animateInAsReplacement: false, appearance: UndoOverlayController.Appearance(isBlurred: true), action: { _ in true })
                                 self.sendMessageContext.tooltipScreen?.dismiss()
                                 self.sendMessageContext.tooltipScreen = undoController
                                 component.controller()?.present(undoController, in: .current)
@@ -4339,6 +4345,7 @@ public final class StoryItemSetContainerComponent: Component {
                                                 urlContext: .generic,
                                                 navigationController: nextController?.navigationController as? NavigationController,
                                                 forceExternal: false,
+                                                forceUpdate: false,
                                                 openPeer: { _, _ in
                                                 },
                                                 sendFile: nil,
@@ -4743,7 +4750,7 @@ public final class StoryItemSetContainerComponent: Component {
                                 controller?.replace(with: c)
                             }
                             component.controller()?.push(controller)
-                        }), elevatedLayout: false, animateInAsReplacement: false, blurred: true, action: { _ in true })
+                        }), elevatedLayout: false, animateInAsReplacement: false, appearance: UndoOverlayController.Appearance(isBlurred: true), action: { _ in true })
                         component.controller()?.present(undoController, in: .current)
                     }
                 }
@@ -5018,7 +5025,7 @@ public final class StoryItemSetContainerComponent: Component {
                 content: .info(title: nil, text: text, timeout: nil, customUndoText: nil),
                 elevatedLayout: false,
                 animateInAsReplacement: false,
-                blurred: true,
+                appearance: UndoOverlayController.Appearance(isBlurred: true),
                 action: { _ in return false }
             )
             self.sendMessageContext.tooltipScreen = controller
@@ -5202,6 +5209,7 @@ public final class StoryItemSetContainerComponent: Component {
                 }
                 navigationController.setViewControllers(viewControllers, animated: true)
             }
+            self.updateIsProgressPaused()
         }
         
         func navigateToPeer(peer: EnginePeer, chat: Bool, subject: ChatControllerSubject? = nil) {
@@ -5402,7 +5410,7 @@ public final class StoryItemSetContainerComponent: Component {
                 }
             }
             
-            guard let controller = MediaEditorScreen.makeEditStoryController(
+            guard let controller = MediaEditorScreenImpl.makeEditStoryController(
                 context: component.context,
                 peer: component.slice.effectivePeer,
                 storyItem: component.slice.item.storyItem,
@@ -5463,7 +5471,7 @@ public final class StoryItemSetContainerComponent: Component {
                 ),
                 elevatedLayout: false,
                 animateInAsReplacement: false,
-                blurred: true,
+                appearance: UndoOverlayController.Appearance(isBlurred: true),
                 action: { [weak self] action in
                     guard let self else {
                         return false
@@ -6188,7 +6196,7 @@ public final class StoryItemSetContainerComponent: Component {
                             content: .info(title: nil, text: component.strings.Story_ToastRemovedFromProfileText, timeout: nil, customUndoText: nil),
                             elevatedLayout: false,
                             animateInAsReplacement: false,
-                            blurred: true,
+                            appearance: UndoOverlayController.Appearance(isBlurred: true),
                             action: { _ in return false }
                         ), nil)
                     } else {
@@ -6197,7 +6205,7 @@ public final class StoryItemSetContainerComponent: Component {
                             content: .info(title: component.strings.Story_ToastSavedToProfileTitle, text: component.strings.Story_ToastSavedToProfileText, timeout: nil, customUndoText: nil),
                             elevatedLayout: false,
                             animateInAsReplacement: false,
-                            blurred: true,
+                            appearance: UndoOverlayController.Appearance(isBlurred: true),
                             action: { _ in return false }
                         ), nil)
                     }
@@ -6252,10 +6260,10 @@ public final class StoryItemSetContainerComponent: Component {
                                 
                                 component.presentController(UndoOverlayController(
                                     presentationData: presentationData,
-                                    content: .linkCopied(text: component.strings.Story_ToastLinkCopied),
+                                    content: .linkCopied(title: nil, text: component.strings.Story_ToastLinkCopied),
                                     elevatedLayout: false,
                                     animateInAsReplacement: false,
-                                    blurred: true,
+                                    appearance: UndoOverlayController.Appearance(isBlurred: true),
                                     action: { _ in return false }
                                 ), nil)
                             }
@@ -6395,7 +6403,7 @@ public final class StoryItemSetContainerComponent: Component {
                                 content: .info(title: nil, text: isGroup ? presentationData.strings.Story_ToastRemovedFromGroupText : presentationData.strings.Story_ToastRemovedFromChannelText, timeout: nil, customUndoText: nil),
                                 elevatedLayout: false,
                                 animateInAsReplacement: false,
-                                blurred: true,
+                                appearance: UndoOverlayController.Appearance(isBlurred: true),
                                 action: { _ in return false }
                             )
                         } else {
@@ -6404,7 +6412,7 @@ public final class StoryItemSetContainerComponent: Component {
                                 content: .info(title: isGroup ? presentationData.strings.Story_ToastSavedToGroupTitle : presentationData.strings.Story_ToastSavedToChannelTitle, text: isGroup ? presentationData.strings.Story_ToastSavedToGroupText : presentationData.strings.Story_ToastSavedToChannelText, timeout: nil, customUndoText: nil),
                                 elevatedLayout: false,
                                 animateInAsReplacement: false,
-                                blurred: true,
+                                appearance: UndoOverlayController.Appearance(isBlurred: true),
                                 action: { _ in return false }
                             ), nil)
                         }
@@ -6465,10 +6473,10 @@ public final class StoryItemSetContainerComponent: Component {
                                 
                                 component.presentController(UndoOverlayController(
                                     presentationData: presentationData,
-                                    content: .linkCopied(text: component.strings.Story_ToastLinkCopied),
+                                    content: .linkCopied(title: nil, text: component.strings.Story_ToastLinkCopied),
                                     elevatedLayout: false,
                                     animateInAsReplacement: false,
-                                    blurred: true,
+                                    appearance: UndoOverlayController.Appearance(isBlurred: true),
                                     action: { _ in return false }
                                 ), nil)
                             }
@@ -6722,7 +6730,7 @@ public final class StoryItemSetContainerComponent: Component {
                                     ], title: nil, text: component.strings.StoryFeed_TooltipNotifyOn(component.slice.effectivePeer.displayTitle(strings: presentationData.strings, displayOrder: presentationData.nameDisplayOrder)).string, customUndoText: nil, timeout: nil),
                                     elevatedLayout: false,
                                     animateInAsReplacement: false,
-                                    blurred: true,
+                                    appearance: UndoOverlayController.Appearance(isBlurred: true),
                                     action: { _ in return false }
                                 ), nil)
                             } else {
@@ -6737,7 +6745,7 @@ public final class StoryItemSetContainerComponent: Component {
                                     ], title: nil, text: component.strings.StoryFeed_TooltipNotifyOff(component.slice.effectivePeer.displayTitle(strings: presentationData.strings, displayOrder: presentationData.nameDisplayOrder)).string, customUndoText: nil, timeout: nil),
                                     elevatedLayout: false,
                                     animateInAsReplacement: false,
-                                    blurred: true,
+                                    appearance: UndoOverlayController.Appearance(isBlurred: true),
                                     action: { _ in return false }
                                 ), nil)
                             }
@@ -6764,10 +6772,10 @@ public final class StoryItemSetContainerComponent: Component {
                                     
                                     component.presentController(UndoOverlayController(
                                         presentationData: presentationData,
-                                        content: .linkCopied(text: component.strings.Story_ToastLinkCopied),
+                                        content: .linkCopied(title: nil, text: component.strings.Story_ToastLinkCopied),
                                         elevatedLayout: false,
                                         animateInAsReplacement: false,
-                                        blurred: true,
+                                        appearance: UndoOverlayController.Appearance(isBlurred: true),
                                         action: { _ in return false }
                                     ), nil)
                                 }
@@ -6811,7 +6819,7 @@ public final class StoryItemSetContainerComponent: Component {
                                 content: .info(title: title, text: text, timeout: nil, customUndoText: nil),
                                 elevatedLayout: false,
                                 animateInAsReplacement: false,
-                                blurred: true,
+                                appearance: UndoOverlayController.Appearance(isBlurred: true),
                                 action: { _ in return false }
                             ), in: .current)
                             
@@ -6987,44 +6995,6 @@ public final class StoryItemSetContainerComponent: Component {
                                 },
                                 requestSelectMessages: nil
                             )
-                            
-//                            let options: [PeerReportOption] = [.spam, .violence, .pornography, .childAbuse, .copyright, .illegalDrugs, .personalDetails, .other]
-//                            presentPeerReportOptions(
-//                                context: component.context,
-//                                parent: controller,
-//                                contextController: c,
-//                                backAction: { _ in },
-//                                subject: .story(component.slice.effectivePeer.id, component.slice.item.storyItem.id),
-//                                options: options,
-//                                passthrough: true,
-//                                forceTheme: defaultDarkPresentationTheme,
-//                                isDetailedReportingVisible: { [weak self] isReporting in
-//                                    guard let self else {
-//                                        return
-//                                    }
-//                                    self.isReporting = isReporting
-//                                    self.updateIsProgressPaused()
-//                                },
-//                                completion: { [weak self] reason, _ in
-//                                    guard let self, let component = self.component, let controller = component.controller(), let reason else {
-//                                        return
-//                                    }
-//                                    let _ = component.context.engine.peers.reportPeerStory(peerId: component.slice.effectivePeer.id, storyId: component.slice.item.storyItem.id, reason: reason, message: "").startStandalone()
-//                                    controller.present(
-//                                        UndoOverlayController(
-//                                            presentationData: presentationData,
-//                                            content: .emoji(
-//                                                name: "PoliceCar",
-//                                                text: presentationData.strings.Report_Succeed
-//                                            ),
-//                                            elevatedLayout: false,
-//                                            blurred: true,
-//                                            action: { _ in return false }
-//                                        )
-//                                        , in: .current
-//                                    )
-//                                }
-//                            )
                         })))
                     }
                 }

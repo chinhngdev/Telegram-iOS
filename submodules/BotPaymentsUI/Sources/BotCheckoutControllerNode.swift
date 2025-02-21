@@ -1527,7 +1527,7 @@ final class BotCheckoutControllerNode: ItemListControllerNode, PKPaymentAuthoriz
                     }
                     
                     switch result {
-                        case let .done(receiptMessageId, _):
+                        case let .done(receiptMessageId, _, _):
                             proceedWithCompletion(true, receiptMessageId)
                         case let .externalVerificationRequired(url):
                             strongSelf.updateActionButton()
@@ -1558,19 +1558,23 @@ final class BotCheckoutControllerNode: ItemListControllerNode, PKPaymentAuthoriz
                         applePayController.presentingViewController?.dismiss(animated: true, completion: nil)
                     }
                     
-                    let text: String
+                    let text: String?
                     switch error {
-                        case .precheckoutFailed:
-                            text = strongSelf.presentationData.strings.Checkout_ErrorPrecheckoutFailed
-                        case .paymentFailed:
-                            text = strongSelf.presentationData.strings.Checkout_ErrorPaymentFailed
-                        case .alreadyPaid:
-                            text = strongSelf.presentationData.strings.Checkout_ErrorInvoiceAlreadyPaid
-                        case .generic:
-                            text = strongSelf.presentationData.strings.Checkout_ErrorGeneric
+                    case .precheckoutFailed:
+                        text = strongSelf.presentationData.strings.Checkout_ErrorPrecheckoutFailed
+                    case .paymentFailed:
+                        text = strongSelf.presentationData.strings.Checkout_ErrorPaymentFailed
+                    case .alreadyPaid:
+                        text = strongSelf.presentationData.strings.Checkout_ErrorInvoiceAlreadyPaid
+                    case .generic:
+                        text = strongSelf.presentationData.strings.Checkout_ErrorGeneric
+                    default:
+                        text = nil
                     }
                     
-                    strongSelf.present(textAlertController(context: strongSelf.context, title: nil, text: text, actions: [TextAlertAction(type: .defaultAction, title: strongSelf.presentationData.strings.Common_OK, action: {})]), nil)
+                    if let text {
+                        strongSelf.present(textAlertController(context: strongSelf.context, title: nil, text: text, actions: [TextAlertAction(type: .defaultAction, title: strongSelf.presentationData.strings.Common_OK, action: {})]), nil)
+                    }
                     
                     strongSelf.failed()
                 }
